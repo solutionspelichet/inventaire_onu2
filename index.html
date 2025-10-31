@@ -4,29 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f6f8fa" />
-  <title>Contrôles & Scan</title>
+  <title>Inventaire ONU</title>
 
-  <!-- PWA (facultatif si tu as déjà manifest/SW) -->
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./favicon.ico" />
-
-  <!-- Feuilles de style -->
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- Librairies tierces (export + QR fallback) -->
+  <!-- Librairies utilisées par app.js (export + QR fallback) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" defer></script>
 </head>
 <body>
+  <!-- Header -->
   <header class="qc-header">
     <div class="qc-head-left">
       <img src="./logo-pelichet.svg" alt="Pelichet" class="qc-logo" onerror="this.style.display='none'">
-      <h1 class="qc-title">Contrôles & Scan</h1>
+      <h1 class="qc-title">Inventaire ONU</h1>
     </div>
     <div class="qc-head-right">
+      <button id="btn-install" class="qc-btn ghost" hidden>Installer</button>
       <button id="btn-theme" class="qc-icon-btn" aria-label="Changer de thème" aria-pressed="false" title="Thème clair/sombre">
-        <svg id="icon-sun"   width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
-        <svg id="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+        <svg id="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+        <svg id="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
     </div>
   </header>
@@ -35,41 +34,77 @@
     <!-- Message API -->
     <div id="api-msg" class="qc-api-msg" role="status" aria-live="polite"></div>
 
-    <!-- Carte de saisie -->
+    <!-- Carte : Scanner -->
     <section class="qc-card">
-      <h2 class="qc-h2">Saisie & Scan</h2>
+      <div class="qc-card-head">
+        <h2 class="qc-h2">Scanner</h2>
+        <small class="qc-muted">Choisissez le mode : Caméra (live) ou Photo (upload)</small>
+      </div>
+
+      <!-- Tuiles scanner -->
+      <div class="scan-tiles">
+        <!-- Caméra (live) -->
+        <button type="button" id="btn-scan-live" class="scan-tile" aria-label="Scanner avec la caméra">
+          <span class="scan-icon">
+            <!-- Icône code-barres caméra -->
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden="true">
+              <path d="M3 7a2 2 0 012-2h3l1-1h5l1 1h3a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7zM7 9h1v6H7V9zm3 0h2v6h-2V9zm4 0h1v6h-1V9z"/>
+            </svg>
+          </span>
+          <span class="scan-label">Caméra (live)</span>
+        </button>
+
+        <!-- Photo (upload) -->
+        <button type="button" id="btn-capture" class="scan-tile" aria-label="Scanner par photo">
+          <span class="scan-icon">
+            <!-- Icône code-barres photo -->
+            <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden="true">
+              <path d="M4 7h3l1-1h8l1 1h3a2 2 0 012 2v7a2 2 0 01-2 2H4a2 2 0 01-2-2V9a2 2 0 012-2zm8 2a3 3 0 100 6 3 3 0 000-6zM7 10h1v5H7v-5zm9 0h1v5h-1v-5z"/>
+            </svg>
+          </span>
+          <span class="scan-label">Photo (upload)</span>
+        </button>
+      </div>
+
+      <!-- input file caché (géré par app.js) -->
+      <input id="photoInput" type="file" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+
+      <!-- Aperçu + statut -->
+      <div class="qc-preview">
+        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:12px;border:1px solid var(--qc-border);" />
+        <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
+        <div id="status" class="qc-status">Prêt.</div>
+      </div>
+    </section>
+
+    <!-- Carte : Formulaire -->
+    <section class="qc-card">
+      <h2 class="qc-h2">Formulaire</h2>
 
       <form id="form" class="qc-form-grid">
-        <div class="qc-grid-2">
-          <div class="qc-field">
-            <label for="date_mvt">Date</label>
-            <input type="date" id="date_mvt" required>
-          </div>
-          <div class="qc-field">
-            <label for="code">Code scanné</label>
-            <input type="text" id="code" inputmode="numeric" autocomplete="off" placeholder="EAN-13 / Code128 / Code39 / QR…" required>
-          </div>
+        <div class="qc-field">
+          <label for="code">Code scanné</label>
+          <input type="text" id="code" placeholder="EAN-13 / Code128 / Code39 / QR…" required>
         </div>
 
-        <div class="qc-grid-3">
-          <div class="qc-field">
-            <label for="from">De (départ)</label>
-            <input type="text" id="from" placeholder="Ex. Voie Creuse" required>
-          </div>
-          <div class="qc-field">
-            <label for="to">Vers (destination)</label>
-            <input type="text" id="to" placeholder="Ex. Bibliothèque" required>
-          </div>
-          <div class="qc-field">
-            <label for="type">Type mobilier</label>
-            <select id="type" required>
-              <option value="" disabled selected>— Sélectionner —</option>
-              <option>Bureau</option><option>Chaise</option><option>Armoire</option>
-              <option>Caisson roulant</option><option>Table de réunion</option><option>Table basse</option>
-              <option>Cabine acoustique</option><option>Poste informatique</option><option>Canapé</option>
-              <option>Vestiaire</option><option>Autre</option>
-            </select>
-          </div>
+        <div class="qc-field">
+          <label for="from">Emplacement de départ</label>
+          <input type="text" id="from" value="Voie Creuse" required>
+        </div>
+
+        <div class="qc-field">
+          <label for="to">Emplacement de destination</label>
+          <input type="text" id="to" value="Bibliothèque" required>
+        </div>
+
+        <div class="qc-field">
+          <label for="type">Type de mobilier</label>
+          <select id="type" required>
+            <option>Bureau</option><option>Chaise</option><option>Armoire</option>
+            <option>Caisson roulant</option><option>Table de réunion</option><option>Table basse</option>
+            <option>Cabine acoustique</option><option>Poste informatique</option><option>Canapé</option>
+            <option>Vestiaire</option><option>Autre</option>
+          </select>
         </div>
 
         <div id="field-type-autre" class="qc-field" hidden>
@@ -77,53 +112,50 @@
           <input type="text" id="type_autre" placeholder="Précisez…">
         </div>
 
+        <div class="qc-field">
+          <label for="date_mvt">Date du mouvement</label>
+          <input type="date" id="date_mvt" required>
+        </div>
+
         <div class="qc-actions">
-          <div class="qc-actions-left">
-            <button type="button" id="btn-scan-live" class="qc-btn">Scan (caméra)</button>
-            <button type="button" id="btn-capture" class="qc-btn outline">Scanner (photo)</button>
-            <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none">
-          </div>
+          <button type="submit" class="qc-btn primary">Enregistrer</button>
           <div class="qc-actions-right">
-            <button type="button" id="btn-test" class="qc-btn ghost">Remplir test</button>
-            <button type="submit" class="qc-btn primary">Enregistrer</button>
+            <button type="button" id="btn-test" class="qc-btn">Test (mock)</button>
+            <button type="button" id="btn-clear-defaults" class="qc-btn ghost">Effacer valeurs par défaut</button>
           </div>
         </div>
       </form>
-
-      <div class="qc-preview">
-        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:12px;border:1px solid var(--qc-border);" />
-        <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
-        <div id="status" class="qc-status">Prêt.</div>
-      </div>
-
-      <div class="qc-pills">
-        <span class="qc-pill">Contrôles du jour : <b id="count-today">0</b></span>
-        <span class="qc-pill">Version : <b>2.3.0</b></span>
-      </div>
     </section>
 
-    <!-- Export -->
+    <!-- Carte : Exports / KPI simple -->
     <section class="qc-card">
-      <h2 class="qc-h2">Export Excel</h2>
+      <div class="qc-kpi-row">
+        <div class="qc-pill">Scans aujourd’hui : <b id="count-today">0</b></div>
+      </div>
+
       <div class="qc-grid-3">
         <div class="qc-field">
           <label for="export_from">Du</label>
-          <input type="date" id="export_from" />
+          <input type="date" id="export_from">
         </div>
         <div class="qc-field">
           <label for="export_to">Au</label>
-          <input type="date" id="export_to" />
+          <input type="date" id="export_to">
         </div>
         <div class="qc-field">
           <label>&nbsp;</label>
-          <button id="btn-download-xls" class="qc-btn primary">Télécharger XLSX</button>
+          <button id="btn-download-xls" class="qc-btn">Télécharger XLS</button>
         </div>
       </div>
+
+      <p class="qc-muted" style="margin-top:8px">Le fichier Excel (.xlsx) est généré localement.</p>
     </section>
   </main>
 
-  <!-- Modale scanner (styles scopés pour ne pas impacter ton layout) -->
-  <div id="scannerModal" class="qc-scanner-modal" aria-hidden="true" style="display:none">
+  <footer class="qc-footer">© Pelichet</footer>
+
+  <!-- Modale scanner -->
+  <div id="scannerModal" class="qc-scanner-modal" style="display:none">
     <div class="qc-scanner-box" role="dialog" aria-modal="true" aria-label="Scanner code-barres">
       <video id="scannerVideo" autoplay muted playsinline></video>
       <div class="qc-scanner-actions">
@@ -133,9 +165,9 @@
     </div>
   </div>
 
-  <!-- Flash & Loader (scopés) -->
+  <!-- Flash + Loader -->
   <div id="flash" class="qc-flash"></div>
-  <div id="globalLoader" class="qc-loader" style="display:none" role="status" aria-live="polite">
+  <div id="globalLoader" class="qc-loader" style="display:none">
     <div class="qc-spinner"></div>
     <div id="loaderMsg">Chargement…</div>
   </div>
