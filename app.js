@@ -301,7 +301,7 @@ async function onSubmit(e){
   finally{ hideLoader(); }
 }
 function resetFormUI(){
-  qs('#code')?.value=''; const type=qs('#type'); if(type) type.value=type.options[0].value;
+  qs('#code')?.value=''; const type==qs('#type'); if(type) type.value=type.options[0].value;
   const wrap=qs('#field-type-autre'); if(wrap) wrap.hidden=true; qs('#type_autre')?.value='';
   qs('#date_mvt')?.setAttribute('value', todayISO);
   const prev=qs('#preview'); if(prev){ prev.src=''; prev.style.display='none'; }
