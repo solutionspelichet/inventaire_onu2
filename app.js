@@ -15,29 +15,19 @@
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
 const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
+/* Inventaire ONU — app.js (v2.4.0) */
 
-// 👉 (Optionnel mais recommandé si tu es hébergé sur GitHub Pages)
-// Si tu as mis en place un PROXY CORS (Cloudflare Worker / Netlify / Vercel),
-// mets son URL ici (ex: "https://ton-worker.ton-sous-domaine.workers.dev")
-const PROXY_BASE = ""; // laisse vide pour appeler directement Apps Script
-
-// Utilise PROXY_BASE s’il est renseigné, sinon API_BASE
+const PROXY_BASE = ""; // laisse vide si pas de proxy CORS
 const api = (qs) => (PROXY_BASE ? `${PROXY_BASE}${qs}` : `${API_BASE}${qs}`);
+const APP_VERSION = "2.4.0";
 
-// Version de l’app pour traçabilité côté Sheets
-const APP_VERSION = "2.3.0";
-
-////////////////////////////////////////
-// Sélecteurs et état
-////////////////////////////////////////
 let canvasEl, statusEl, flashEl, previewEl;
+let loaderEl, toastEl, submitBtn;
 let fileBlob = null;
 let todayISO = new Date().toISOString().slice(0,10);
 let deferredPrompt = null;
 
-////////////////////////////////////////
-// Helpers PWA / iOS
-////////////////////////////////////////
+/* ---------- PWA helpers ---------- */
 function isIos() {
   const ua = navigator.userAgent || '';
   return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -49,21 +39,16 @@ function isSafari() {
 function isInStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 }
-
 window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
+  e.preventDefault(); deferredPrompt = e;
   const btn = document.getElementById('btn-install');
   if (btn && !isInStandalone() && !isIos()) btn.hidden = false;
 });
 window.addEventListener('appinstalled', () => {
-  const btn = document.getElementById('btn-install');
-  if (btn) btn.hidden = true;
+  const btn = document.getElementById('btn-install'); if (btn) btn.hidden = true;
 });
 
-////////////////////////////////////////
-/* Thème Pelichet light/dark */
-////////////////////////////////////////
+/* ---------- Thème ---------- */
 function applyTheme(theme) {
   const root = document.documentElement;
   if (theme === 'dark') root.setAttribute('data-theme','dark'); else root.removeAttribute('data-theme');
@@ -75,40 +60,26 @@ function applyTheme(theme) {
   const btn = document.getElementById('btn-theme');
   if (sun && moon && btn) {
     const isDark = theme === 'dark';
-    sun.hidden = isDark;
-    moon.hidden = !isDark;
+    sun.hidden = isDark; moon.hidden = !isDark;
     btn.setAttribute('aria-pressed', String(isDark));
   }
 }
-function initTheme() {
-  const stored = localStorage.getItem('theme');
-  applyTheme(stored || 'light'); // par défaut : clair
-}
+function initTheme() { applyTheme(localStorage.getItem('theme') || 'light'); }
 function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
   const next = current === 'light' ? 'dark' : 'light';
-  localStorage.setItem('theme', next);
-  applyTheme(next);
+  localStorage.setItem('theme', next); applyTheme(next);
 }
 
-////////////////////////////////////////
-// Valeurs persistées (from/to/type)
-////////////////////////////////////////
+/* ---------- Valeurs persistées ---------- */
 const PERSIST_KEY = 'inventaire_defaults_v1';
 function loadPersistentDefaults() {
   try {
-    const raw = localStorage.getItem(PERSIST_KEY);
-    if (!raw) return;
+    const raw = localStorage.getItem(PERSIST_KEY); if (!raw) return;
     const data = JSON.parse(raw);
-    if (data && typeof data === 'object') {
-      if (data.from) document.getElementById('from').value = data.from;
-      if (data.to) document.getElementById('to').value = data.to;
-      if (data.type) {
-        const sel = document.getElementById('type');
-        sel.value = data.type;
-        sel.dispatchEvent(new Event('change'));
-      }
-    }
+    if (data.from) document.getElementById('from').value = data.from;
+    if (data.to) document.getElementById('to').value = data.to;
+    if (data.type) { const sel = document.getElementById('type'); sel.value = data.type; sel.dispatchEvent(new Event('change')); }
   } catch(_) {}
 }
 function savePersistentDefaults() {
@@ -127,9 +98,7 @@ function clearPersistentDefaults() {
   setStatus('Valeurs par défaut effacées.');
 }
 
-////////////////////////////////////////
-// UI helpers
-////////////////////////////////////////
+/* ---------- UI helpers (status, loader, toast) ---------- */
 function setStatus(msg){ if (statusEl) statusEl.textContent = msg; }
 function setApiMsg(msg, isError=false) {
   const el = document.getElementById('api-msg');
@@ -156,9 +125,34 @@ function onCodeDetected(text){
   if (codeInput) { codeInput.value = text; codeInput.focus(); }
 }
 
-////////////////////////////////////////
-// Scan : ZXing / jsQR / BarcodeDetector
-////////////////////////////////////////
+/* Loader + Toast */
+function showLoader(msg='Envoi en cours…') {
+  if (loaderEl) {
+    const t = loaderEl.querySelector('.loader-text');
+    if (t) t.textContent = msg;
+    loaderEl.hidden = false;
+  }
+  if (submitBtn) submitBtn.disabled = true;
+}
+function hideLoader() {
+  if (loaderEl) loaderEl.hidden = true;
+  if (submitBtn) submitBtn.disabled = false;
+}
+function showToast(message, type='success') {
+  if (!toastEl) return;
+  toastEl.textContent = message;
+  toastEl.className = 'toast ' + (type === 'error' ? 'toast-error' : 'toast-success');
+  toastEl.hidden = false;
+  // lance l’anim d’apparition
+  requestAnimationFrame(() => toastEl.classList.remove('hide'));
+  // cache après 3s
+  setTimeout(() => {
+    toastEl.classList.add('hide');
+    setTimeout(() => { toastEl.hidden = true; toastEl.className = 'toast'; }, 220);
+  }, 3000);
+}
+
+/* ---------- Scan ---------- */
 const ZX_HINTS = (function(){
   try {
     const hints = new Map();
@@ -175,7 +169,6 @@ const ZX_HINTS = (function(){
     return hints;
   } catch(_) { return null; }
 })();
-
 function preprocessCanvas(ctx, w, h) {
   const img = ctx.getImageData(0,0,w,h);
   const d = img.data;
@@ -194,7 +187,6 @@ function preprocessCanvas(ctx, w, h) {
   }
   ctx.putImageData(img, 0, 0);
 }
-
 async function tryBarcodeDetector(canvas) {
   if (!('BarcodeDetector' in window)) return null;
   try {
@@ -230,24 +222,17 @@ function tryJsQRFromCanvas(ctx, w, h) {
   return null;
 }
 
-////////////////////////////////////////
-// DOM Ready
-////////////////////////////////////////
+/* ---------- DOM Ready ---------- */
 document.addEventListener('DOMContentLoaded', () => {
-  // Thème
   initTheme();
-  const btnTheme = document.getElementById('btn-theme');
-  if (btnTheme) btnTheme.addEventListener('click', toggleTheme);
+  const btnTheme = document.getElementById('btn-theme'); if (btnTheme) btnTheme.addEventListener('click', toggleTheme);
 
-  // Installer (Android/desktop via beforeinstallprompt ; iOS Safari = aide)
   const btnInstall = document.getElementById('btn-install');
   const iosPanel   = document.getElementById('ios-a2hs');
   const iosClose   = document.getElementById('ios-a2hs-close');
   const iosCard    = document.querySelector('#ios-a2hs .ios-a2hs-card');
 
-  if (btnInstall && isIos() && isSafari() && !isInStandalone()) {
-    btnInstall.hidden = false;
-  }
+  if (btnInstall && isIos() && isSafari() && !isInStandalone()) btnInstall.hidden = false;
   if (btnInstall) {
     btnInstall.addEventListener('click', async () => {
       if (isIos() && isSafari() && !isInStandalone()) {
@@ -270,13 +255,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (iosCard) iosCard.addEventListener('click', (e) => e.stopPropagation());
 
-  // Réfs UI
   canvasEl = document.getElementById('canvas');
   statusEl = document.getElementById('status');
   flashEl = document.getElementById('flash');
   previewEl = document.getElementById('preview');
 
-  // Capture photo
+  loaderEl = document.getElementById('loader');
+  toastEl  = document.getElementById('toast');
+  submitBtn = document.getElementById('btn-submit');
+
   const btnCapture = document.getElementById('btn-capture');
   const photoInput = document.getElementById('photoInput');
   if (btnCapture && photoInput) {
@@ -284,25 +271,19 @@ document.addEventListener('DOMContentLoaded', () => {
     photoInput.addEventListener('change', onPhotoPicked);
   }
 
-  // Formulaire
   const typeSel = document.getElementById('type');
   const typeOtherWrap = document.getElementById('field-type-autre');
-  if (typeSel && typeOtherWrap) {
-    typeSel.addEventListener('change', () => { typeOtherWrap.hidden = (typeSel.value !== 'Autre'); });
-  }
-  const dateInput = document.getElementById('date_mvt');
-  if (dateInput) dateInput.value = todayISO;
+  if (typeSel && typeOtherWrap) typeSel.addEventListener('change', () => { typeOtherWrap.hidden = (typeSel.value !== 'Autre'); });
 
-  const form = document.getElementById('form');
-  if (form) form.addEventListener('submit', onSubmit);
+  const dateInput = document.getElementById('date_mvt'); if (dateInput) dateInput.value = todayISO;
 
-  const btnTest = document.getElementById('btn-test');
-  if (btnTest) btnTest.addEventListener('click', onTest);
+  const form = document.getElementById('form'); if (form) form.addEventListener('submit', onSubmit);
+
+  const btnTest = document.getElementById('btn-test'); if (btnTest) btnTest.addEventListener('click', onTest);
 
   const btnClearDefaults = document.getElementById('btn-clear-defaults');
   if (btnClearDefaults) btnClearDefaults.addEventListener('click', clearPersistentDefaults);
 
-  // Export XLS
   const exportFrom = document.getElementById('export_from');
   const exportTo = document.getElementById('export_to');
   const btnXls = document.getElementById('btn-download-xls');
@@ -310,17 +291,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (exportTo) exportTo.value = todayISO;
   if (btnXls) btnXls.addEventListener('click', onDownloadXls);
 
-  // Service Worker
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js');
 
-  // Compteur + valeurs persistées
   refreshTodayCount();
   loadPersistentDefaults();
 });
 
-////////////////////////////////////////
-// Compteur du jour
-////////////////////////////////////////
+/* ---------- Compteur ---------- */
 async function refreshTodayCount() {
   try {
     const res = await fetch(api(`?route=/stats&day=${todayISO}`), { method:'GET', mode:'cors', credentials:'omit' });
@@ -330,13 +307,10 @@ async function refreshTodayCount() {
       return;
     }
   } catch(_) {}
-  const el = document.getElementById('count-today');
-  if (el) el.textContent = '0';
+  const el = document.getElementById('count-today'); if (el) el.textContent = '0';
 }
 
-////////////////////////////////////////
-// Export Excel (CSV -> XLSX)
-////////////////////////////////////////
+/* ---------- Export Excel ---------- */
 async function onDownloadXls() {
   const from = document.getElementById('export_from')?.value;
   const to   = document.getElementById('export_to')?.value;
@@ -344,153 +318,102 @@ async function onDownloadXls() {
   if (from > to)     { setStatus('La date de début doit être antérieure à la date de fin.'); return; }
 
   try {
-    setStatus('Préparation de l’export…');
-
+    showLoader('Préparation de l’export…');
     const url = api(`?route=/export&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
     const res = await fetch(url, { method:'GET', mode:'cors', credentials:'omit' });
+    hideLoader();
 
     const ct = res.headers.get('content-type') || '';
     const csvText = await res.text();
 
-    if (!res.ok) { setStatus(`Erreur export (${res.status}).`); return; }
+    if (!res.ok) { showToast(`Erreur export (${res.status})`, 'error'); return; }
     if (ct.includes('application/json')) {
-      try { const j = JSON.parse(csvText); setStatus(`Export: ${j.message || 'réponse JSON inattendue'}`); }
-      catch { setStatus('Export: réponse JSON inattendue.'); }
+      try { const j = JSON.parse(csvText); showToast(j.message || 'Réponse JSON inattendue', 'error'); }
+      catch { showToast('Réponse JSON inattendue', 'error'); }
       return;
     }
 
     const nonEmpty = csvText.trim();
     const lineCount = nonEmpty ? nonEmpty.split(/\r?\n/).length : 0;
-    if (lineCount <= 1) { setStatus('Aucune donnée dans la période choisie.'); return; }
+    if (lineCount <= 1) { showToast('Aucune donnée dans la période choisie.', 'error'); return; }
 
-    if (typeof XLSX === 'undefined') { setStatus('Librairie Excel indisponible.'); return; }
+    if (typeof XLSX === 'undefined') { showToast('Librairie Excel indisponible.', 'error'); return; }
 
     const wb = XLSX.read(csvText, { type: 'string', raw: true, cellText: false, cellDates: false });
     const first = wb.SheetNames[0];
     if (first !== 'Export') {
       if (wb.Sheets['Export']) { delete wb.Sheets['Export']; const i = wb.SheetNames.indexOf('Export'); if (i>-1) wb.SheetNames.splice(i,1); }
-      wb.Sheets['Export'] = wb.Sheets[first];
-      delete wb.Sheets[first];
-      const idxFirst = wb.SheetNames.indexOf(first);
-      if (idxFirst > -1) wb.SheetNames[idxFirst] = 'Export';
+      wb.Sheets['Export'] = wb.Sheets[first]; delete wb.Sheets[first];
+      const idxFirst = wb.SheetNames.indexOf(first); if (idxFirst > -1) wb.SheetNames[idxFirst] = 'Export';
     }
     const ws = wb.Sheets['Export'];
-
-    // Forcer colonne C (code_scanné) en texte + largeur auto
     const ref = ws['!ref'];
     if (ref) {
       const range = XLSX.utils.decode_range(ref);
-      const colIdx = 2; // C
-      let maxLen = 'code_scanné'.length;
-
+      const colIdx = 2; let maxLen = 'code_scanné'.length;
       for (let R = range.s.r + 1; R <= range.e.r; R++) {
         const addr = XLSX.utils.encode_cell({ r: R, c: colIdx });
-        const cell = ws[addr];
-        if (!cell) continue;
+        const cell = ws[addr]; if (!cell) continue;
         const val = (cell.v == null) ? '' : String(cell.v);
         cell.t = 's'; cell.v = val; cell.w = val; cell.z = '@';
         if (val.length > maxLen) maxLen = val.length;
       }
-
       const wch = Math.max(18, Math.min(40, maxLen + 2));
-      const cols = ws['!cols'] || [];
-      while (cols.length <= colIdx) cols.push({});
-      cols[colIdx] = { wch, hidden: false };
-      ws['!cols'] = cols;
+      const cols = ws['!cols'] || []; while (cols.length <= colIdx) cols.push({});
+      cols[colIdx] = { wch, hidden: false }; ws['!cols'] = cols;
     }
-
     XLSX.writeFile(wb, `inventaire_${from}_au_${to}.xlsx`);
-    setStatus('Fichier Excel téléchargé ✅ (colonne C en texte)');
+    showToast('Fichier Excel téléchargé ✅', 'success');
   } catch (err) {
-    console.error(err);
-    setStatus('Erreur export. Vérifiez la période et réessayez.');
+    hideLoader(); console.error(err); showToast('Erreur export', 'error');
   }
 }
 
-////////////////////////////////////////
-// Photo -> décodage
-////////////////////////////////////////
+/* ---------- Photo -> décodage ---------- */
 function onPhotoPicked(ev){
   const file = ev.target.files && ev.target.files[0];
-  if (!file) {
-    fileBlob = null; if (previewEl) previewEl.style.display = 'none';
-    setStatus('Aucune photo choisie.'); return;
-  }
+  if (!file) { fileBlob = null; if (previewEl) previewEl.style.display = 'none'; setStatus('Aucune photo choisie.'); return; }
   fileBlob = file;
   const url = URL.createObjectURL(file);
   if (previewEl) { previewEl.src = url; previewEl.style.display = 'block'; }
-
-  setStatus('Décodage en cours…');
-  setTimeout(decodePhoto, 0);
+  setStatus('Décodage en cours…'); setTimeout(decodePhoto, 0);
 }
-
 async function decodePhoto(){
   if (!fileBlob) return;
-
   let bitmap;
-  try {
-    bitmap = await createImageBitmap(fileBlob, { imageOrientation: 'from-image' });
-  } catch {
-    const img = await new Promise((res,rej)=>{
-      const u = URL.createObjectURL(fileBlob);
-      const i = new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=u;
-    });
-    const c = document.createElement('canvas');
-    c.width = img.naturalWidth; c.height = img.naturalHeight;
-    c.getContext('2d').drawImage(img,0,0);
-    bitmap = c;
+  try { bitmap = await createImageBitmap(fileBlob, { imageOrientation: 'from-image' }); }
+  catch {
+    const img = await new Promise((res,rej)=>{ const u = URL.createObjectURL(fileBlob); const i = new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=u; });
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext('2d').drawImage(img,0,0); bitmap = c;
   }
-
   const width = bitmap.width || bitmap.canvas?.width;
   const height = bitmap.height || bitmap.canvas?.height;
-  const scales    = [1.0, 0.8, 0.6, 0.45];
-  const rotations = [0, 90, 180, 270];
-
+  const scales=[1.0,0.8,0.6,0.45], rotations=[0,90,180,270];
   const canvas = canvasEl;
-  for (const scale of scales) {
-    for (const rot of rotations) {
-      const targetW = Math.max(240, Math.round(width * scale));
-      const targetH = Math.max(240, Math.round(height * scale));
-      const w = (rot % 180 === 0) ? targetW : targetH;
-      const h = (rot % 180 === 0) ? targetH : targetW;
-      canvas.width = w; canvas.height = h;
-
-      const ctx2 = canvas.getContext('2d', { willReadFrequently: true });
-      ctx2.save();
-      ctx2.translate(w/2, h/2);
-      ctx2.rotate(rot * Math.PI/180);
-      ctx2.drawImage(bitmap, -targetW/2, -targetH/2, targetW, targetH);
-      ctx2.restore();
-
-      preprocessCanvas(ctx2, w, h);
-
-      const bd = await tryBarcodeDetector(canvas);
-      if (bd) { showPreview(canvas); onCodeDetected(bd.text); return; }
-
-      const zx = tryZXingFromCanvas(canvas);
-      if (zx) { showPreview(canvas); onCodeDetected(zx.text); return; }
-
-      const jq = tryJsQRFromCanvas(ctx2, w, h);
-      if (jq) { showPreview(canvas); onCodeDetected(jq.text); return; }
-    }
+  for (const scale of scales) for (const rot of rotations) {
+    const targetW = Math.max(240, Math.round(width * scale));
+    const targetH = Math.max(240, Math.round(height * scale));
+    const w = (rot % 180 === 0) ? targetW : targetH;
+    const h = (rot % 180 === 0) ? targetH : targetW;
+    canvas.width = w; canvas.height = h;
+    const ctx2 = canvas.getContext('2d', { willReadFrequently: true });
+    ctx2.save(); ctx2.translate(w/2, h/2); ctx2.rotate(rot * Math.PI/180);
+    ctx2.drawImage(bitmap, -targetW/2, -targetH/2, targetW, targetH); ctx2.restore();
+    preprocessCanvas(ctx2, w, h);
+    const bd = await tryBarcodeDetector(canvas); if (bd) { showPreview(canvas); onCodeDetected(bd.text); return; }
+    const zx = tryZXingFromCanvas(canvas); if (zx) { showPreview(canvas); onCodeDetected(zx.text); return; }
+    const jq = tryJsQRFromCanvas(ctx2, w, h); if (jq) { showPreview(canvas); onCodeDetected(jq.text); return; }
   }
-
-  showPreview(canvas);
-  setStatus('Aucun code détecté. Reprenez la photo (plus net, plus proche, meilleure lumière).');
+  showPreview(canvas); setStatus('Aucun code détecté. Reprenez la photo (plus net, plus proche, meilleure lumière).');
 }
-
 function showPreview(canvas) {
-  try {
-    const url = canvas.toDataURL('image/png');
-    if (previewEl) { previewEl.src = url; previewEl.style.display = 'block'; }
-  } catch(_) {}
+  try { const url = canvas.toDataURL('image/png'); if (previewEl) { previewEl.src = url; previewEl.style.display = 'block'; } } catch(_) {}
 }
 
-////////////////////////////////////////
-// Envoi backend
-////////////////////////////////////////
+/* ---------- Envoi backend ---------- */
 async function onSubmit(ev) {
   ev.preventDefault();
+
   const code = (document.getElementById('code')?.value || '').trim();
   const from = (document.getElementById('from')?.value || '').trim();
   const to = (document.getElementById('to')?.value || '').trim();
@@ -498,7 +421,7 @@ async function onSubmit(ev) {
   const typeAutre = (document.getElementById('type_autre')?.value || '').trim();
   const date_mvt = document.getElementById('date_mvt')?.value;
 
-  if (!code || !from || !to || !type) return setApiMsg('Veuillez remplir tous les champs.', true);
+  if (!code || !from || !to || !type) { showToast('Veuillez remplir tous les champs.', 'error'); return; }
 
   const form = new URLSearchParams();
   form.set('route','/items');
@@ -511,6 +434,9 @@ async function onSubmit(ev) {
   form.set('date_mouvement', date_mvt);
   form.set('source_app_version', APP_VERSION);
 
+  showLoader('Envoi en cours…');
+  setApiMsg('', false);
+
   try {
     const res = await fetch(api(`?route=/items`), {
       method: 'POST',
@@ -520,10 +446,13 @@ async function onSubmit(ev) {
       credentials: 'omit'
     });
     const data = await res.json().catch(()=> ({}));
+    hideLoader();
+
     if (data && data.status >= 200 && data.status < 300) {
       setApiMsg('Écrit dans Google Sheets ✅', false);
+      showToast('Saisie enregistrée ✅', 'success');
       savePersistentDefaults();
-      // compteur
+
       if (document.getElementById('date_mvt')?.value === todayISO) {
         const el = document.getElementById('count-today');
         if (el) el.textContent = String((parseInt(el.textContent,10)||0)+1);
@@ -532,14 +461,16 @@ async function onSubmit(ev) {
       }
       resetFormUI();
     } else {
-      setApiMsg(`Erreur API: ${data && data.message ? data.message : 'Inconnue'}`, true);
+      const msg = (data && data.message) ? data.message : 'Erreur inconnue';
+      setApiMsg(`Erreur API: ${msg}`, true);
+      showToast(`Erreur API: ${msg}`, 'error');
     }
   } catch (err) {
-    console.error(err);
-    setApiMsg('Erreur réseau/API. Si tu es sur GitHub Pages, pense au PROXY CORS.', true);
+    hideLoader(); console.error(err);
+    setApiMsg('Erreur réseau/API.', true);
+    showToast('Erreur réseau/API.', 'error');
   }
 }
-
 function resetFormUI() {
   const codeEl = document.getElementById('code'); if (codeEl) codeEl.value = '';
   const typeOtherWrap = document.getElementById('field-type-autre');
@@ -556,9 +487,7 @@ function resetFormUI() {
   if (navigator.vibrate) navigator.vibrate(50);
 }
 
-////////////////////////////////////////
-// Bouton Test (remplit le formulaire)
-////////////////////////////////////////
+/* ---------- Bouton Test ---------- */
 function onTest() {
   const codeEl = document.getElementById('code');
   const fromEl = document.getElementById('from');
