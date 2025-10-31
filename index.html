@@ -71,55 +71,56 @@
   <main class="qc-container">
     <!-- Bloc scanner -->
     <section class="qc-card">
-      <h2 class="qc-h2">Scanner</h2>
-      <div class="scan-tiles">
-        <!-- Bouton caméra -->
-        <button type="button" id="btn-scan-live" class="scan-tile">
-          <span class="scan-icon">
-            <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
-            </svg>
-          </span>
-          <span class="scan-label">Scanner (live)</span>
-        </button>
+  <h2 class="qc-h2">Scanner</h2>
 
-        <!-- Bouton photo -->
-        <button type="button" id="btn-capture" class="scan-tile">
-          <span class="scan-icon">
-            <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
-            </svg>
-          </span>
-          <span class="scan-label">Scanner (photo)</span>
-        </button>
-      </div>
+  <div class="scan-tiles vertical">
+    <!-- Bouton live (caméra) -->
+    <button type="button" id="btn-scan-live" class="scan-tile">
+      <span class="scan-icon">
+        <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
+          <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
+        </svg>
+      </span>
+      <span class="scan-label">Scanner (live)</span>
+    </button>
 
-      <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+    <!-- Bouton photo -->
+    <button type="button" id="btn-capture" class="scan-tile">
+      <span class="scan-icon">
+        <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
+          <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
+          <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+          <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
+        </svg>
+      </span>
+      <span class="scan-label">Scanner (photo)</span>
+    </button>
+  </div>
 
-      <div class="qc-preview">
-        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:10px;border:1px solid var(--qc-border);" />
-        <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
-        <div id="status" class="qc-status">Prêt.</div>
-      </div>
-    </section>
+  <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+
+  <div class="qc-preview">
+    <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:10px;border:1px solid var(--qc-border);" />
+    <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
+    <div id="status" class="qc-status">Prêt.</div>
+  </div>
+</section>
 
     <!-- Formulaire -->
     <section class="qc-card">
