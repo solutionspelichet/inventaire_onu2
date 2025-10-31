@@ -14,7 +14,7 @@
 ////////////////////////////////////////
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
-const API_BASE = "https://script.google.com/macros/s/AKfycbyy826nPPtV.../exec";
+const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
 
 // 👉 (Optionnel mais recommandé si tu es hébergé sur GitHub Pages)
 // Si tu as mis en place un PROXY CORS (Cloudflare Worker / Netlify / Vercel),
