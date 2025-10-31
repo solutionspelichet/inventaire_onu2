@@ -1,15 +1,17 @@
-/* Inventaire ONU — app.js (v2.2.0 sans secret)
- * - Android/desktop : bouton Installer quand beforeinstallprompt arrive
- * - iOS Safari : bouton Installer ouvre une aide (jamais automatique)
- * - Thème Pelichet (clair par défaut) + toggle
- * - Scan photo : BarcodeDetector → ZXing (+hints) → jsQR
- * - Persistance from/to/type + effacer valeurs
- * - POST Apps Script + compteur du jour
+/* Inventaire ONU — app.js (v2.3.0 hybride scanner)
+ * - PWA install
+ * - Thème Pelichet (clair/sombre)
+ * - SCAN hybride :
+ *     1) BarcodeDetector natif (iOS/Android récents)
+ *     2) Quagga2 (si self-host libs/quagga.min.js)
+ *     3) ZXing (CDN)
+ * - Décodage photo upload (HEIC iPhone OK)
+ * - POST Apps Script + compteur jour
  * - Export XLSX (col. C texte + largeur auto)
  */
 
-const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
-const APP_VERSION = "2.2.0";
+const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec"; // ← à toi
+const APP_VERSION = "2.3.0";
 const AUTO_RECAPTURE = true;
 
 let canvasEl, statusEl, flashEl, previewEl;
@@ -105,7 +107,47 @@ function clearPersistentDefaults() {
   setStatus('Valeurs par défaut effacées.');
 }
 
-/* ================== Scan helpers ================== */
+/* ================== Chargement libs ================== */
+function loadScriptOnce(src){
+  return new Promise((resolve,reject)=>{
+    if ([...document.scripts].some(s => s.src && s.src.split('?')[0] === src.split('?')[0])) return resolve();
+    const s=document.createElement('script');
+    s.src=src; s.async=true; s.crossOrigin='anonymous';
+    s.onload=()=>resolve(); s.onerror=()=>reject(new Error('Échec chargement: '+src));
+    document.head.appendChild(s);
+  });
+}
+// ZXing pour fallback
+async function ensureZXing(){
+  if (window.ZXing) return;
+  await loadScriptOnce('https://unpkg.com/@zxing/library@0.20.0');
+}
+// jsQR (déjà importé par index.html chez toi)
+function ensureJsQR(){ return Promise.resolve(); }
+// HEIC → JPEG
+async function ensureHeic2Any(){
+  if(window.heic2any) return;
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js');
+}
+// Quagga2 (si tu le self-host)
+async function ensureQuagga(){
+  if (window.Quagga) return;
+  const base = location.origin + location.pathname.replace(/\/[^/]*$/,'/');
+  await loadScriptOnce(base + 'libs/quagga.min.js').catch(()=>{});
+}
+// BarcodeDetector natif
+function hasBarcodeDetector(){ return 'BarcodeDetector' in window; }
+async function createBarcodeDetector(){
+  if (!hasBarcodeDetector()) throw new Error('BD non supporté');
+  try{
+    const sup = await window.BarcodeDetector.getSupportedFormats?.();
+    const wanted = ['qr_code','ean_13','code_128','code_39','itf','upc_e','upc_a','ean_8'];
+    const fmts = sup ? wanted.filter(f => sup.includes(f)) : wanted;
+    return new window.BarcodeDetector({ formats: fmts });
+  }catch(_){ return new window.BarcodeDetector(); }
+}
+
+/* ================== Scan helpers (canvas) ================== */
 const ZX_HINTS = (function(){
   try {
     const hints = new Map();
@@ -122,7 +164,6 @@ const ZX_HINTS = (function(){
     return hints;
   } catch(_) { return null; }
 })();
-
 function preprocessCanvas(ctx, w, h) {
   const img = ctx.getImageData(0,0,w,h);
   const d = img.data;
@@ -141,128 +182,37 @@ function preprocessCanvas(ctx, w, h) {
   }
   ctx.putImageData(img, 0, 0);
 }
-async function tryBarcodeDetector(canvas) {
-  if (!('BarcodeDetector' in window)) return null;
-  try {
-    const sup = await BarcodeDetector.getSupportedFormats?.();
-    const wanted = ['qr_code','ean_13','code_128','code_39','itf','upc_e','upc_a'];
-    const fmts = sup ? wanted.filter(f => sup.includes(f)) : wanted;
-    const det = new BarcodeDetector({ formats: fmts });
+async function tryBarcodeDetectorOn(canvas){
+  if (!hasBarcodeDetector()) return null;
+  try{
+    const det = await createBarcodeDetector();
     const blob = await new Promise(r => canvas.toBlob(r, 'image/png', 0.92));
-    const imgBitmap = await createImageBitmap(blob);
-    const res = await det.detect(imgBitmap);
-    if (res && res[0] && res[0].rawValue) return { text: res[0].rawValue, engine: 'BarcodeDetector' };
-  } catch(_) {}
+    const bmp = await createImageBitmap(blob);
+    const res = await det.detect(bmp);
+    if (res && res[0]?.rawValue) return res[0].rawValue;
+  }catch(_){}
   return null;
 }
-function tryZXingFromCanvas(canvas) {
-  try {
+function tryZXingOn(canvas){
+  try{
     const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
     const bin = new ZXing.HybridBinarizer(luminance);
     const bmp = new ZXing.BinaryBitmap(bin);
     const reader = new ZXing.MultiFormatReader();
     if (ZX_HINTS) reader.setHints(ZX_HINTS);
     const res = reader.decode(bmp);
-    if (res && res.getText) return { text: res.getText(), engine: 'ZXing' };
-  } catch(_) {}
+    if (res && res.getText) return res.getText();
+  }catch(_){}
   return null;
 }
-function tryJsQRFromCanvas(ctx, w, h) {
-  try {
+function tryJsQROn(ctx,w,h){
+  try{
     const data = ctx.getImageData(0,0,w,h);
-    const code = jsQR(data.data, w, h);
-    if (code && code.data) return { text: code.data, engine: 'jsQR' };
-  } catch(_) {}
+    const code = jsQR(data.data,w,h);
+    if (code?.data) return code.data;
+  }catch(_){}
   return null;
 }
-
-/* ================== DOM Ready ================== */
-document.addEventListener('DOMContentLoaded', () => {
-  // Thème
-  initTheme();
-  const btnTheme = document.getElementById('btn-theme');
-  if (btnTheme) btnTheme.addEventListener('click', toggleTheme);
-
-  // Installer (Android/desktop via beforeinstallprompt ; iOS Safari = aide)
-  const btnInstall = document.getElementById('btn-install');
-  const iosPanel   = document.getElementById('ios-a2hs');
-  const iosClose   = document.getElementById('ios-a2hs-close');
-  const iosCard    = document.querySelector('#ios-a2hs .ios-a2hs-card');
-
-  if (btnInstall && isIos() && isSafari() && !isInStandalone()) {
-    btnInstall.hidden = false;
-  }
-  if (btnInstall) {
-    btnInstall.addEventListener('click', async () => {
-      if (isIos() && isSafari() && !isInStandalone()) {
-        if (iosPanel) iosPanel.hidden = false;
-        if (iosClose) setTimeout(()=>iosClose.focus(), 0);
-        return;
-      }
-      if (deferredPrompt) {
-        try { deferredPrompt.prompt(); await deferredPrompt.userChoice; } catch(_) {}
-        deferredPrompt = null;
-      } else {
-        alert('Sur Android : ouvrez le menu ⋮ puis “Ajouter à l’écran d’accueil”.');
-      }
-    });
-  }
-  if (iosClose) iosClose.addEventListener('click', () => { iosPanel.hidden = true; });
-  if (iosPanel) {
-    iosPanel.addEventListener('click', (ev) => { if (ev.target === iosPanel) iosPanel.hidden = true; });
-    window.addEventListener('keydown', (ev) => {
-      if (!iosPanel.hidden && ev.key === 'Escape') iosPanel.hidden = true;
-    });
-  }
-  if (iosCard) iosCard.addEventListener('click', (e) => e.stopPropagation());
-
-  // Réfs UI
-  canvasEl = document.getElementById('canvas');
-  statusEl = document.getElementById('status');
-  flashEl = document.getElementById('flash');
-  previewEl = document.getElementById('preview');
-
-  // Capture photo
-  const btnCapture = document.getElementById('btn-capture');
-  const photoInput = document.getElementById('photoInput');
-  if (btnCapture && photoInput) {
-    btnCapture.addEventListener('click', () => { photoInput.click(); });
-    photoInput.addEventListener('change', onPhotoPicked);
-  }
-
-  // Formulaire
-  const typeSel = document.getElementById('type');
-  const typeOtherWrap = document.getElementById('field-type-autre');
-  if (typeSel && typeOtherWrap) {
-    typeSel.addEventListener('change', () => { typeOtherWrap.hidden = (typeSel.value !== 'Autre'); });
-  }
-  const dateInput = document.getElementById('date_mvt');
-  if (dateInput) dateInput.value = todayISO;
-
-  const form = document.getElementById('form');
-  if (form) form.addEventListener('submit', onSubmit);
-
-  const btnTest = document.getElementById('btn-test');
-  if (btnTest) btnTest.addEventListener('click', onTest);
-
-  const btnClearDefaults = document.getElementById('btn-clear-defaults');
-  if (btnClearDefaults) btnClearDefaults.addEventListener('click', clearPersistentDefaults);
-
-  // Export XLS
-  const exportFrom = document.getElementById('export_from');
-  const exportTo = document.getElementById('export_to');
-  const btnXls = document.getElementById('btn-download-xls');
-  if (exportFrom) exportFrom.value = todayISO;
-  if (exportTo) exportTo.value = todayISO;
-  if (btnXls) btnXls.addEventListener('click', onDownloadXls);
-
-  // Service Worker
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js');
-
-  // Compteur + valeurs persistées
-  refreshTodayCount();
-  loadPersistentDefaults();
-});
 
 /* ================== UI helpers ================== */
 function setStatus(msg){ if (statusEl) statusEl.textContent = msg; }
@@ -291,12 +241,12 @@ function onCodeDetected(text){
   if (codeInput) { codeInput.value = text; codeInput.focus(); }
 }
 
-/* ================== Compteur (GET simple) ================== */
+/* ================== Compteur jour (GET) ================== */
 async function refreshTodayCount() {
   try {
     const res = await fetch(`${API_BASE}?route=/stats&day=${todayISO}`, { method:'GET', mode:'cors', credentials:'omit' });
     const data = await res.json().catch(()=> ({}));
-    if (data && data.status === 200 && data.data && typeof data.data.count === 'number') {
+    if (data && data.status === 200 && typeof data.data?.count === 'number') {
       document.getElementById('count-today').textContent = String(data.data.count);
       return;
     }
@@ -305,7 +255,7 @@ async function refreshTodayCount() {
   if (el) el.textContent = String(todayCount);
 }
 
-/* ================== Export XLSX (GET simple) ================== */
+/* ================== Export XLSX (GET) ================== */
 async function onDownloadXls() {
   const from = document.getElementById('export_from')?.value;
   const to   = document.getElementById('export_to')?.value;
@@ -323,7 +273,7 @@ async function onDownloadXls() {
 
     if (!res.ok) { setStatus(`Erreur export (${res.status}).`); return; }
     if (ct.includes('application/json')) {
-      try { const j = JSON.parse(csvText); setStatus(`Export: ${j.message || 'réponse JSON inattendue'}`); }
+      try { const j = JSON.parse(csvText); setStatus(`Export: ${j.message || 'réponse JSON'}`); }
       catch { setStatus('Export: réponse JSON inattendue.'); }
       return;
     }
@@ -376,7 +326,7 @@ async function onDownloadXls() {
   }
 }
 
-/* ================== Photo -> décodage ================== */
+/* ================== Photo → décodage ================== */
 function onPhotoPicked(ev){
   const file = ev.target.files && ev.target.files[0];
   if (!file) {
@@ -394,12 +344,21 @@ function onPhotoPicked(ev){
 async function decodePhoto(){
   if (!fileBlob) return;
 
+  // HEIC/HEIF → JPEG (iPhone)
+  let blob = fileBlob;
+  if (/image\/heic|image\/heif/i.test(blob.type) || /\.heic$/i.test(blob.name||'')) {
+    try {
+      await ensureHeic2Any();
+      blob = await heic2any({ blob, toType: 'image/jpeg', quality: 0.95 });
+    } catch(_) {}
+  }
+
   let bitmap;
   try {
-    bitmap = await createImageBitmap(fileBlob, { imageOrientation: 'from-image' });
+    bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
   } catch {
     const img = await new Promise((res,rej)=>{
-      const u = URL.createObjectURL(fileBlob);
+      const u = URL.createObjectURL(blob);
       const i = new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=u;
     });
     const c = document.createElement('canvas');
@@ -431,14 +390,19 @@ async function decodePhoto(){
 
       preprocessCanvas(ctx2, w, h);
 
-      const bd = await tryBarcodeDetector(canvas);
-      if (bd) { showPreview(canvas); onCodeDetected(bd.text); return; }
+      // 1) Natif
+      const bd = await tryBarcodeDetectorOn(canvas);
+      if (bd) { showPreview(canvas); onCodeDetected(String(bd).trim()); return; }
 
-      const zx = tryZXingFromCanvas(canvas);
-      if (zx) { showPreview(canvas); onCodeDetected(zx.text); return; }
+      // 2) ZXing
+      await ensureZXing();
+      const zx = tryZXingOn(canvas);
+      if (zx) { showPreview(canvas); onCodeDetected(String(zx).trim()); return; }
 
-      const jq = tryJsQRFromCanvas(ctx2, w, h);
-      if (jq) { showPreview(canvas); onCodeDetected(jq.text); return; }
+      // 3) jsQR (QR only)
+      await ensureJsQR();
+      const jq = tryJsQROn(ctx2, w, h);
+      if (jq) { showPreview(canvas); onCodeDetected(String(jq).trim()); return; }
     }
   }
 
@@ -453,7 +417,128 @@ function showPreview(canvas) {
   } catch(_) {}
 }
 
-/* ================== Envoi backend (POST simple) ================== */
+/* ================== Scan live (caméra) ================== */
+let _cameraStream=null, _nativeLoopId=null, _nativeDetector=null, _zxingReader=null;
+
+async function ensureCameraAccess(videoEl){
+  const constraints = {
+    audio: false,
+    video: {
+      facingMode: { ideal:'environment' },
+      width: { ideal: 1280 },
+      height:{ ideal: 720 }
+    }
+  };
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("getUserMedia indisponible");
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  _cameraStream = stream;
+  videoEl.srcObject = stream;
+  videoEl.setAttribute('playsinline','true');
+  await videoEl.play();
+  return stream;
+}
+function releaseCamera(){
+  try{ _cameraStream?.getTracks()?.forEach(t=>t.stop()); }catch(_){}
+  _cameraStream=null;
+}
+
+function openScanner(){
+  const modal = document.getElementById('scannerModal');
+  if (modal) modal.style.display='grid';
+}
+function closeScanner(){
+  stopScanner();
+  const modal = document.getElementById('scannerModal');
+  if (modal) modal.style.display='none';
+}
+function stopScanner(){
+  // natif
+  try{ cancelAnimationFrame(_nativeLoopId);}catch(_){}
+  _nativeLoopId=null; _nativeDetector=null;
+  // zxing
+  try{ _zxingReader && _zxingReader.reset(); }catch(_){}
+  _zxingReader=null;
+  // caméra
+  releaseCamera();
+}
+
+async function startScanner(){
+  const videoEl = document.getElementById('scannerVideo');
+  if (!videoEl) { alert("Section scanner manquante dans l'HTML."); return; }
+
+  openScanner();
+
+  try{ await ensureCameraAccess(videoEl); }
+  catch(_){ alert("Caméra refusée. Autorisez l'accès à l'appareil photo."); return; }
+
+  // 1) natif
+  try{
+    _nativeDetector = await createBarcodeDetector();
+    startNativeLoop(videoEl, (code)=>{ if(code){ onCodeDetected(code); closeScanner(); } });
+    return;
+  }catch(_){}
+
+  // 2) Quagga (si self-hosté)
+  try{
+    await ensureQuagga();
+    if (window.Quagga){
+      try{ Quagga.stop(); }catch(_){}
+      Quagga.init({
+        inputStream:{ name:'Live', type:'LiveStream', target: videoEl, constraints:{ facingMode:'environment' } },
+        decoder:{ readers:['ean_reader','code_128_reader','code_39_reader'] },
+        locate:true, locator:{ halfSample:true, patchSize:'medium' }
+      }, (err)=>{ if(err) throw err; Quagga.start(); });
+      Quagga.offDetected?.();
+      Quagga.onDetected((res)=>{
+        const code = res?.codeResult?.code ? String(res.codeResult.code).trim() : '';
+        if (code){ onCodeDetected(code); closeScanner(); }
+      });
+      return;
+    }
+  }catch(_){}
+
+  // 3) ZXing
+  try{
+    await ensureZXing();
+    _zxingReader = new ZXing.BrowserMultiFormatReader();
+    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
+    const back = devices.find(d=>/back|rear|environment/i.test(d.label))?.deviceId || devices[0]?.deviceId;
+    await _zxingReader.decodeFromVideoDevice(back, videoEl, (result, err, controls)=>{
+      if(result?.getText){
+        onCodeDetected(String(result.getText()).trim());
+        controls.stop(); closeScanner();
+      }
+    });
+  }catch(_){
+    alert("Impossible de démarrer le scan. Utilisez l’upload photo.");
+  }
+}
+function startNativeLoop(videoEl, onCode){
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently:true });
+  const loop = async ()=>{
+    const vw = videoEl.videoWidth||1280, vh = videoEl.videoHeight||720;
+    if (!vw || !vh){ _nativeLoopId=requestAnimationFrame(loop); return; }
+    canvas.width = vw; canvas.height = vh;
+    ctx.drawImage(videoEl,0,0,vw,vh);
+    try{
+      const det = _nativeDetector;
+      if (det){
+        const blob = await new Promise(r=>canvas.toBlob(r,'image/png',0.9));
+        const bmp = await createImageBitmap(blob);
+        const res = await det.detect(bmp);
+        if (res && res[0]?.rawValue){
+          onCode(String(res[0].rawValue).trim()); return;
+        }
+      }
+    }catch(_){}
+    _nativeLoopId=requestAnimationFrame(loop);
+  };
+  cancelAnimationFrame(_nativeLoopId);
+  _nativeLoopId=requestAnimationFrame(loop);
+}
+
+/* ================== Envoi backend (POST) ================== */
 async function onSubmit(ev) {
   ev.preventDefault();
   const code = (document.getElementById('code')?.value || '').trim();
@@ -518,6 +603,86 @@ function resetFormUI() {
   setStatus('Saisie enregistrée ✅. Nouvelle photo possible.');
   if (navigator.vibrate) navigator.vibrate(50);
 }
+
+/* ================== DOM Ready ================== */
+document.addEventListener('DOMContentLoaded', () => {
+  // Thème
+  initTheme();
+  const btnTheme = document.getElementById('btn-theme');
+  if (btnTheme) btnTheme.addEventListener('click', toggleTheme);
+
+  // Installer PWA
+  const btnInstall = document.getElementById('btn-install');
+  const iosPanel   = document.getElementById('ios-a2hs');
+  const iosClose   = document.getElementById('ios-a2hs-close');
+  const iosCard    = document.querySelector('#ios-a2hs .ios-a2hs-card');
+
+  if (btnInstall && isIos() && isSafari() && !isInStandalone()) { btnInstall.hidden = false; }
+  if (btnInstall) {
+    btnInstall.addEventListener('click', async () => {
+      if (isIos() && isSafari() && !isInStandalone()) { if (iosPanel) iosPanel.hidden = false; if (iosClose) setTimeout(()=>iosClose.focus(), 0); return; }
+      if (deferredPrompt) { try { deferredPrompt.prompt(); await deferredPrompt.userChoice; } catch(_) {} deferredPrompt = null; }
+      else { alert('Sur Android : ouvrez le menu ⋮ puis “Ajouter à l’écran d’accueil”.'); }
+    });
+  }
+  if (iosClose) iosClose.addEventListener('click', () => { iosPanel.hidden = true; });
+  if (iosPanel) {
+    iosPanel.addEventListener('click', (ev) => { if (ev.target === iosPanel) iosPanel.hidden = true; });
+    window.addEventListener('keydown', (ev) => { if (!iosPanel.hidden && ev.key === 'Escape') iosPanel.hidden = true; });
+  }
+  if (iosCard) iosCard.addEventListener('click', (e) => e.stopPropagation());
+
+  // Réfs UI
+  canvasEl = document.getElementById('canvas');
+  statusEl = document.getElementById('status');
+  flashEl = document.getElementById('flash');
+  previewEl = document.getElementById('preview');
+
+  // Capture photo (upload)
+  const btnCapture = document.getElementById('btn-capture');
+  const photoInput = document.getElementById('photoInput');
+  if (btnCapture && photoInput) {
+    btnCapture.addEventListener('click', () => { photoInput.click(); });
+    photoInput.addEventListener('change', onPhotoPicked);
+  }
+
+  // Bouton scan live (optionnel si présent dans l’HTML)
+  const btnScan = document.getElementById('btn-scan-live');
+  if (btnScan) btnScan.addEventListener('click', startScanner);
+  const btnScanStop  = document.getElementById('scannerStop');  if (btnScanStop)  btnScanStop.addEventListener('click', stopScanner);
+  const btnScanClose = document.getElementById('scannerClose'); if (btnScanClose) btnScanClose.addEventListener('click', closeScanner);
+
+  // Formulaire
+  const typeSel = document.getElementById('type');
+  const typeOtherWrap = document.getElementById('field-type-autre');
+  if (typeSel && typeOtherWrap) typeSel.addEventListener('change', () => { typeOtherWrap.hidden = (typeSel.value !== 'Autre'); });
+  const dateInput = document.getElementById('date_mvt');
+  if (dateInput) dateInput.value = todayISO;
+
+  const form = document.getElementById('form');
+  if (form) form.addEventListener('submit', onSubmit);
+
+  const btnTest = document.getElementById('btn-test');
+  if (btnTest) btnTest.addEventListener('click', onTest);
+
+  const btnClearDefaults = document.getElementById('btn-clear-defaults');
+  if (btnClearDefaults) btnClearDefaults.addEventListener('click', clearPersistentDefaults);
+
+  // Export XLS
+  const exportFrom = document.getElementById('export_from');
+  const exportTo = document.getElementById('export_to');
+  const btnXls = document.getElementById('btn-download-xls');
+  if (exportFrom) exportFrom.value = todayISO;
+  if (exportTo) exportTo.value = todayISO;
+  if (btnXls) btnXls.addEventListener('click', onDownloadXls);
+
+  // Service Worker
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js');
+
+  // Compteur + valeurs persistées
+  refreshTodayCount();
+  loadPersistentDefaults();
+});
 
 /* ================== Bouton Test ================== */
 function onTest() {
