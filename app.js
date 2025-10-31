@@ -1,6 +1,6 @@
 /* ================== App Frontend — QC ================== */
 /* Backend (Apps Script WebApp /exec) */
-const API_BASE = "https://script.google.com/macros/s/AKfycbyy826nPPtVW-HpyUSqzhJ-Eoq42_-rXhYHW3WXi3rT9cZ61dW264c7DDnfagnrXjM7/exec";
+const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
 const APP_VERSION = "2.3.2";
 
 /* ---------- Helpers DOM ---------- */
