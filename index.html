@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Inventaire ONU</title>
+  <meta name="description" content="PWA Inventaire ONU — scanner et enregistrer des mouvements dans Google Sheets." />
+  <meta name="robots" content="noindex,nofollow" />
+  <meta name="theme-color" content="#ffffff" />
+
+  <!-- Empêche tout élément [hidden] d’apparaître (prioritaire) -->
+  <style>[hidden]{display:none!important}</style>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest?v=1" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-16.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png" />
+  <link rel="icon" href="icons/favicon.ico" />
+
+  <!-- iOS A2HS metas -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Inventaire ONU">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles.css?v=3" />
+
+  <!-- Librairies nécessaires -->
+  <script defer src="https://unpkg.com/@zxing/library@0.20.0"></script>
+  <script defer src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- App -->
+  <script defer src="app.js?v=3"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/pelichet-logo.png" alt="Pelichet" class="logo" />
+      <h1>Inventaire ONU</h1>
+    </div>
+
+    <div class="actions-right">
+      <!-- Affiché si:
+           - Android/desktop: when beforeinstallprompt fired
+           - iOS Safari: pour ouvrir l’aide -->
+      <button id="btn-install" class="ghost" aria-label="Installer l’app (PWA)" hidden>Installer</button>
+
+      <button id="btn-theme" class="icon-btn" aria-label="Basculer clair/sombre" title="Thème clair/sombre" aria-pressed="false">
+        <svg id="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.64 5.64 4.22 4.22m15.56 15.56-1.42-1.42M5.64 18.36 4.22 19.78m15.56-15.56-1.42 1.42M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" fill="currentColor"/></svg>
+        <svg id="icon-moon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- SCAN -->
+    <section class="card">
+      <h2>Scanner (mode photo)</h2>
+      <div class="capture-wrap">
+        <button id="btn-capture" type="button" class="capture-btn" aria-label="Prendre une photo du code">
+          <svg viewBox="0 0 160 80" aria-hidden="true" class="barcode-icon">
+            <rect x="8"  y="12" width="6"  height="56" fill="currentColor" opacity="0.85"/>
+            <rect x="18" y="12" width="3"  height="56" fill="currentColor" opacity="0.75"/>
+            <rect x="24" y="12" width="8"  height="56" fill="currentColor"/>
+            <rect x="36" y="12" width="4"  height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="44" y="12" width="10" height="56" fill="currentColor"/>
+            <rect x="58" y="12" width="3"  height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="64" y="12" width="7"  height="56" fill="currentColor"/>
+            <rect x="75" y="12" width="4"  height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="82" y="12" width="9"  height="56" fill="currentColor"/>
+            <rect x="95" y="12" width="3"  height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="100" y="12" width="6" height="56" fill="currentColor"/>
+            <rect x="110" y="12" width="4" height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="118" y="12" width="10" height="56" fill="currentColor"/>
+            <rect x="132" y="12" width="4" height="56" fill="currentColor" opacity="0.7"/>
+            <rect x="0" y="38" width="160" height="4" fill="#F58220"/>
+          </svg>
+          <span>Scanner (photo)</span>
+        </button>
+        <input id="photoInput" type="file" accept="image/*" capture="environment" class="visually-hidden" />
+      </div>
+
+      <div id="preview-wrap" class="video-wrap">
+        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;height:auto;border-radius:10px;" />
+        <canvas id="canvas" class="hidden" aria-hidden="true"></canvas>
+        <div id="flash" class="flash" aria-hidden="true"></div>
+        <div id="status" class="status" role="status" aria-live="polite">Prêt.</div>
+      </div>
+    </section>
+
+    <!-- Formulaire -->
+    <section class="card">
+      <h2>Formulaire</h2>
+      <form id="form">
+        <div class="field">
+          <label for="code">Code scanné</label>
+          <input id="code" name="code" type="text" inputmode="text" autocomplete="off" required />
+        </div>
+
+        <div class="field">
+          <label for="from">Emplacement de départ</label>
+          <input id="from" name="from" type="text" autocomplete="off" placeholder="ex : Voie Creuse" required />
+        </div>
+
+        <div class="field">
+          <label for="to">Emplacement de destination</label>
+          <input id="to" name="to" type="text" autocomplete="off" placeholder="ex : Bibliothèque" required />
+        </div>
+
+        <div class="field">
+          <label for="type">Type de mobilier</label>
+          <select id="type" name="type" required>
+            <option value="">— Choisir —</option>
+            <option>La petite bite de Jaime</option>
+            <option>Bureau</option>
+            <option>Chaise</option>
+            <option>Armoire</option>
+            <option>Caisson roulant</option>
+            <option>Table de réunion</option>
+            <option>Table basse</option>
+            <option>Cabine acoustique</option>
+            <option>Poste informatique</option>
+            <option>Canapé</option>
+            <option>Vestiaire</option>
+            <option value="Autre">Autre…</option>
+          </select>
+        </div>
+
+        <div class="field" id="field-type-autre" hidden>
+          <label for="type_autre">Type (autre)</label>
+          <input id="type_autre" name="type_autre" type="text" autocomplete="off" placeholder="Saisir le type" />
+        </div>
+
+        <div class="field">
+          <label for="date_mvt">Date du mouvement</label>
+          <input id="date_mvt" name="date_mvt" type="date" required />
+        </div>
+
+        <div class="actions" style="flex-wrap:wrap">
+          <button type="submit">Enregistrer</button>
+          <button type="button" id="btn-test" class="ghost">Test (mock)</button>
+          <button type="button" id="btn-clear-defaults" class="ghost" title="Effacer les valeurs de départ/destination/type mémorisées">Effacer valeurs par défaut</button>
+        </div>
+
+        <p id="api-msg" class="muted" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <!-- Stats & Export (fin de page) -->
+    <section class="card mini">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <div><strong>Scans aujourd’hui :</strong> <span id="count-today">—</span></div>
+        <div style="margin-left:auto"></div>
+        <label for="export_from">Du</label>
+        <input id="export_from" type="date" />
+        <label for="export_to">au</label>
+        <input id="export_to" type="date" />
+        <button id="btn-download-xls" type="button" class="ghost">Télécharger XLS</button>
+      </div>
+      <small class="muted">Le fichier Excel (.xlsx) est généré localement.</small>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>© Pelichet</small>
+  </footer>
+
+  <!-- Aide iOS Install (jamais auto, seulement via bouton) -->
+  <div id="ios-a2hs" class="ios-a2hs" hidden role="dialog" aria-modal="true" aria-labelledby="ios-a2hs-title">
+    <div class="ios-a2hs-card">
+      <h3 id="ios-a2hs-title">Installer sur iPhone/iPad</h3>
+      <ol>
+        <li>Ouvrez cette page dans <strong>Safari</strong>.</li>
+        <li>Appuyez sur le bouton <strong>Partager</strong> <span class="share-icon" aria-hidden="true">⬆︎</span>.</li>
+        <li>Sélectionnez <strong>Ajouter à l’écran d’accueil</strong>.</li>
+      </ol>
+      <button id="ios-a2hs-close" class="ghost" type="button">OK</button>
+    </div>
+  </div>
+</body>
+</html>
