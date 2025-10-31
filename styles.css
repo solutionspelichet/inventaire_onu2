@@ -134,3 +134,14 @@ body{
 /* KPI pill */
 .qc-kpi-row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
 .qc-pill{ display:inline-block; padding:6px 12px; background:rgba(148,163,184,.15); border-radius:999px; }
+/* Disposition verticale pour les tuiles scanner */
+.scan-tiles.vertical {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.scan-tiles.vertical .scan-tile {
+  width: 100%;
+  justify-content: flex-start;
+}
+
