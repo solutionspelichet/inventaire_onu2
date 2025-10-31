@@ -3,181 +3,170 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Inventaire ONU</title>
-  <meta name="description" content="PWA Inventaire ONU — scanner et enregistrer des mouvements dans Google Sheets." />
-  <meta name="robots" content="noindex,nofollow" />
-  <meta name="theme-color" content="#ffffff" />
-
-  <!-- Empêche tout élément [hidden] d’apparaître (prioritaire) -->
-  <style>[hidden]{display:none!important}</style>
-
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.webmanifest?v=1" />
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png" />
-  <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-16.png" />
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png" />
-  <link rel="icon" href="icons/favicon.ico" />
-
-  <!-- iOS A2HS metas -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Inventaire ONU">
-
-  <!-- Styles -->
-  <link rel="stylesheet" href="styles.css?v=3" />
-
-  <!-- Librairies nécessaires -->
-  <script defer src="https://unpkg.com/@zxing/library@0.20.0"></script>
-  <script defer src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
-  <!-- App -->
-  <script defer src="app.js?v=3"></script>
+  <meta name="theme-color" content="#f6f8fa" />
+  <title>Inventaire ONU — Contrôles & Scan</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./favicon.ico" />
+  <link rel="stylesheet" href="./styles.css" />
+  <!-- XLSX pour export Excel (utilisé dans app.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+  <!-- jsQR (fallback QR uniquement, utilisé par app.js si besoin) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="assets/pelichet-logo.png" alt="Pelichet" class="logo" />
+  <!-- Bandeau top -->
+  <header class="header">
+    <div class="header-left">
+      <img src="./logo-pelichet.svg" alt="Pelichet" class="logo" onerror="this.style.display='none'">
       <h1>Inventaire ONU</h1>
     </div>
-
-    <div class="actions-right">
-      <!-- Affiché si:
-           - Android/desktop: when beforeinstallprompt fired
-           - iOS Safari: pour ouvrir l’aide -->
-      <button id="btn-install" class="ghost" aria-label="Installer l’app (PWA)" hidden>Installer</button>
-
-      <button id="btn-theme" class="icon-btn" aria-label="Basculer clair/sombre" title="Thème clair/sombre" aria-pressed="false">
-        <svg id="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.64 5.64 4.22 4.22m15.56 15.56-1.42-1.42M5.64 18.36 4.22 19.78m15.56-15.56-1.42 1.42M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z" fill="currentColor"/></svg>
-        <svg id="icon-moon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" fill="currentColor"/></svg>
+    <div class="header-right">
+      <!-- Thème -->
+      <button id="btn-theme" class="icon-btn" aria-label="Changer de thème" aria-pressed="false">
+        <svg id="icon-sun"   width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h-0v3h0zm0 19v-3h0v3h0zm8-11h3v0h-3v0zM1 12h3v0H1v0zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+        <svg id="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
+      <!-- Installer PWA -->
+      <button id="btn-install" class="btn ghost" hidden>Installer</button>
     </div>
   </header>
 
-  <main>
-    <!-- SCAN -->
+  <main class="container">
+    <!-- Statut/API feedback -->
+    <div id="api-msg" class="api-msg" role="status" aria-live="polite"></div>
+
+    <!-- Carte formulaire -->
     <section class="card">
-      <h2>Scanner (mode photo)</h2>
-      <div class="capture-wrap">
-        <button id="btn-capture" type="button" class="capture-btn" aria-label="Prendre une photo du code">
-          <svg viewBox="0 0 160 80" aria-hidden="true" class="barcode-icon">
-            <rect x="8"  y="12" width="6"  height="56" fill="currentColor" opacity="0.85"/>
-            <rect x="18" y="12" width="3"  height="56" fill="currentColor" opacity="0.75"/>
-            <rect x="24" y="12" width="8"  height="56" fill="currentColor"/>
-            <rect x="36" y="12" width="4"  height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="44" y="12" width="10" height="56" fill="currentColor"/>
-            <rect x="58" y="12" width="3"  height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="64" y="12" width="7"  height="56" fill="currentColor"/>
-            <rect x="75" y="12" width="4"  height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="82" y="12" width="9"  height="56" fill="currentColor"/>
-            <rect x="95" y="12" width="3"  height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="100" y="12" width="6" height="56" fill="currentColor"/>
-            <rect x="110" y="12" width="4" height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="118" y="12" width="10" height="56" fill="currentColor"/>
-            <rect x="132" y="12" width="4" height="56" fill="currentColor" opacity="0.7"/>
-            <rect x="0" y="38" width="160" height="4" fill="#F58220"/>
-          </svg>
-          <span>Scanner (photo)</span>
-        </button>
-        <input id="photoInput" type="file" accept="image/*" capture="environment" class="visually-hidden" />
-      </div>
+      <h2>Saisie & Scan</h2>
 
-      <div id="preview-wrap" class="video-wrap">
-        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;height:auto;border-radius:10px;" />
-        <canvas id="canvas" class="hidden" aria-hidden="true"></canvas>
-        <div id="flash" class="flash" aria-hidden="true"></div>
-        <div id="status" class="status" role="status" aria-live="polite">Prêt.</div>
-      </div>
-    </section>
-
-    <!-- Formulaire -->
-    <section class="card">
-      <h2>Formulaire</h2>
-      <form id="form">
-        <div class="field">
-          <label for="code">Code scanné</label>
-          <input id="code" name="code" type="text" inputmode="text" autocomplete="off" required />
+      <form id="form" class="form-grid">
+        <div class="grid-2">
+          <div class="field">
+            <label for="date_mvt">Date</label>
+            <input type="date" id="date_mvt" name="date_mvt" required />
+          </div>
+          <div class="field">
+            <label for="code">Code scanné</label>
+            <input type="text" id="code" name="code" inputmode="numeric" autocomplete="off" placeholder="EAN-/Code128-/Code39-/QR…" required />
+          </div>
         </div>
 
-        <div class="field">
-          <label for="from">Emplacement de départ</label>
-          <input id="from" name="from" type="text" autocomplete="off" placeholder="ex : Voie Creuse" required />
+        <div class="grid-3">
+          <div class="field">
+            <label for="from">De (départ)</label>
+            <input type="text" id="from" name="from" placeholder="Ex. Voie Creuse" required />
+          </div>
+          <div class="field">
+            <label for="to">Vers (destination)</label>
+            <input type="text" id="to" name="to" placeholder="Ex. Bibliothèque" required />
+          </div>
+          <div class="field">
+            <label for="type">Type mobilier</label>
+            <select id="type" name="type" required>
+              <option value="" disabled selected>— Sélectionner —</option>
+              <option>Bureau</option>
+              <option>Chaise</option>
+              <option>Armoire</option>
+              <option>Caisson roulant</option>
+              <option>Table de réunion</option>
+              <option>Table basse</option>
+              <option>Cabine acoustique</option>
+              <option>Poste informatique</option>
+              <option>Canapé</option>
+              <option>Vestiaire</option>
+              <option>Autre</option>
+            </select>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="to">Emplacement de destination</label>
-          <input id="to" name="to" type="text" autocomplete="off" placeholder="ex : Bibliothèque" required />
-        </div>
-
-        <div class="field">
-          <label for="type">Type de mobilier</label>
-          <select id="type" name="type" required>
-            <option value="">— Choisir —</option>
-            <option>La petite bite de Jaime</option>
-            <option>Bureau</option>
-            <option>Chaise</option>
-            <option>Armoire</option>
-            <option>Caisson roulant</option>
-            <option>Table de réunion</option>
-            <option>Table basse</option>
-            <option>Cabine acoustique</option>
-            <option>Poste informatique</option>
-            <option>Canapé</option>
-            <option>Vestiaire</option>
-            <option value="Autre">Autre…</option>
-          </select>
-        </div>
-
-        <div class="field" id="field-type-autre" hidden>
+        <div id="field-type-autre" class="field" hidden>
           <label for="type_autre">Type (autre)</label>
-          <input id="type_autre" name="type_autre" type="text" autocomplete="off" placeholder="Saisir le type" />
+          <input type="text" id="type_autre" name="type_autre" placeholder="Précisez…" />
         </div>
 
-        <div class="field">
-          <label for="date_mvt">Date du mouvement</label>
-          <input id="date_mvt" name="date_mvt" type="date" required />
+        <!-- Actions Scan -->
+        <div class="actions">
+          <div class="actions-left">
+            <button type="button" id="btn-scan-live" class="btn">Scan (caméra)</button>
+            <button type="button" id="btn-capture" class="btn outline">Scanner (photo)</button>
+            <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+          </div>
+          <div class="actions-right">
+            <button type="button" id="btn-test" class="btn ghost">Remplir de test</button>
+            <button type="submit" class="btn primary">Enregistrer</button>
+          </div>
         </div>
-
-        <div class="actions" style="flex-wrap:wrap">
-          <button type="submit">Enregistrer</button>
-          <button type="button" id="btn-test" class="ghost">Test (mock)</button>
-          <button type="button" id="btn-clear-defaults" class="ghost" title="Effacer les valeurs de départ/destination/type mémorisées">Effacer valeurs par défaut</button>
-        </div>
-
-        <p id="api-msg" class="muted" aria-live="polite"></p>
       </form>
+
+      <!-- Prévisualisation -->
+      <div class="preview-wrap">
+        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:12px;border:1px solid var(--border);" />
+        <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
+        <div id="status" class="status">Prêt.</div>
+      </div>
+
+      <!-- Infos du jour -->
+      <div class="pill-row">
+        <span class="pill">Contrôles du jour : <b id="count-today">0</b></span>
+        <span class="pill">Version : <b>2.3.0</b></span>
+      </div>
     </section>
 
-    <!-- Stats & Export (fin de page) -->
-    <section class="card mini">
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-        <div><strong>Scans aujourd’hui :</strong> <span id="count-today">—</span></div>
-        <div style="margin-left:auto"></div>
-        <label for="export_from">Du</label>
-        <input id="export_from" type="date" />
-        <label for="export_to">au</label>
-        <input id="export_to" type="date" />
-        <button id="btn-download-xls" type="button" class="ghost">Télécharger XLS</button>
+    <!-- Export -->
+    <section class="card">
+      <h2>Export Excel (CSV→XLSX)</h2>
+      <div class="grid-3">
+        <div class="field">
+          <label for="export_from">Du</label>
+          <input type="date" id="export_from" />
+        </div>
+        <div class="field">
+          <label for="export_to">Au</label>
+          <input type="date" id="export_to" />
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="btn-download-xls" class="btn primary">Télécharger XLSX</button>
+        </div>
       </div>
-      <small class="muted">Le fichier Excel (.xlsx) est généré localement.</small>
     </section>
   </main>
 
-  <footer class="foot">
-    <small>© Pelichet</small>
-  </footer>
-
-  <!-- Aide iOS Install (jamais auto, seulement via bouton) -->
-  <div id="ios-a2hs" class="ios-a2hs" hidden role="dialog" aria-modal="true" aria-labelledby="ios-a2hs-title">
-    <div class="ios-a2hs-card">
-      <h3 id="ios-a2hs-title">Installer sur iPhone/iPad</h3>
+  <!-- Modale iOS A2HS -->
+  <div id="ios-a2hs" class="modal" hidden>
+    <div class="modal-card ios-a2hs-card">
+      <h3>Installer sur l’écran d’accueil (iPhone/iPad)</h3>
       <ol>
-        <li>Ouvrez cette page dans <strong>Safari</strong>.</li>
-        <li>Appuyez sur le bouton <strong>Partager</strong> <span class="share-icon" aria-hidden="true">⬆︎</span>.</li>
-        <li>Sélectionnez <strong>Ajouter à l’écran d’accueil</strong>.</li>
+        <li>Appuyez sur <b>Partager</b> (icône carré avec flèche)</li>
+        <li>Choisissez <b>Ajouter à l’écran d’accueil</b></li>
       </ol>
-      <button id="ios-a2hs-close" class="ghost" type="button">OK</button>
+      <div class="modal-actions">
+        <button id="ios-a2hs-close" class="btn">Compris</button>
+      </div>
     </div>
   </div>
+
+  <!-- Modale Scanner -->
+  <div id="scannerModal" class="scanner-modal" style="display:none">
+    <div class="scanner-box">
+      <video id="scannerVideo" autoplay muted playsinline></video>
+      <div class="scanner-actions">
+        <button type="button" id="scannerStop" class="btn ghost">Stop</button>
+        <button type="button" id="scannerClose" class="btn">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flash visual -->
+  <div id="flash" class="flash"></div>
+
+  <!-- Loader global -->
+  <div id="globalLoader" class="loader" style="display:none">
+    <div class="spinner"></div>
+    <div id="loaderMsg">Chargement…</div>
+  </div>
+
+  <!-- App -->
+  <script src="./app.js"></script>
 </body>
 </html>
