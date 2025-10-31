@@ -292,21 +292,46 @@ async function onSubmit(e){
   try{
     const r=await fetch(`${API_BASE}?route=/items`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form.toString()});
     const j=await r.json().catch(()=> ({}));
-    if(j && j.status>=200 && j.status<300){
-      setApiMsg('Écrit dans Google Sheets ✅');
-      const el=qs('#count-today'); if(el && date===todayISO){ el.textContent=String((parseInt(el.textContent,10)||0)+1); } else { refreshTodayCount(); }
-      resetFormUI();
-    }else setApiMsg('Erreur API : '+(j?.message||'inconnue'), true);
-  }catch(err){ setApiMsg('Erreur réseau/API', true); }
-  finally{ hideLoader(); }
+   if (j && j.status >= 200 && j.status < 300) {
+  setApiMsg('Écrit dans Google Sheets ✅');
+
+  const el = qs('#count-today');
+  if (el && date === todayISO) {
+    const current = parseInt(el.textContent, 10) || 0;
+    el.textContent = String(current + 1);
+  } else {
+    refreshTodayCount();
+  }
+
+  resetFormUI();
+} else {
+  setApiMsg('Erreur API : ' + ((j && j.message) ? j.message : 'inconnue'), true);
 }
-function resetFormUI(){
-  qs('#code')?.value=''; const type==qs('#type'); if(type) type.value=type.options[0].value;
-  const wrap=qs('#field-type-autre'); if(wrap) wrap.hidden=true; qs('#type_autre')?.value='';
-  qs('#date_mvt')?.setAttribute('value', todayISO);
-  const prev=qs('#preview'); if(prev){ prev.src=''; prev.style.display='none'; }
-  setStatus('Saisie enregistrée ✅');
+} catch (err) {
+  setApiMsg('Erreur réseau/API', true);
+} finally {
+  hideLoader();
 }
+
+function resetFormUI() {
+  const codeEl = qs('#code');
+  if (codeEl) codeEl.value = '';
+
+  const type = qs('#type');
+  if (type && type.options && type.options.length) {
+    type.value = type.options[0].value;
+  }
+
+  const wrap = qs('#field-type-autre');
+  if (wrap) wrap.hidden = true;
+
+  const other = qs('#type_autre');
+  if (other) other.value = '';
+
+  const dateEl = qs('#date_mvt');
+  if (dateEl) dateEl.value = todayISO; // plus robuste que setAttribute
+}
+
 
 /* ---------- Bouton test ---------- */
 function onTest(){
