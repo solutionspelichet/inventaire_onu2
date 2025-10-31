@@ -10,7 +10,7 @@
   <link rel="icon" href="./favicon.ico"/>
   <link rel="stylesheet" href="./styles.css"/>
 
-  <!-- Librairies (export Excel + fallback QR si besoin) -->
+  <!-- Librairies : Excel + QR fallback -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" defer></script>
 </head>
@@ -21,7 +21,7 @@
       <h1 class="qc-title">Inventaire ONU</h1>
     </div>
     <div class="qc-head-right">
-      <button id="btn-theme" class="qc-icon-btn" aria-label="Changer de thème" aria-pressed="false">
+      <button id="btn-theme" class="qc-icon-btn" aria-label="Changer de thème" aria-pressed="false" title="Thème clair/sombre">
         <svg id="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
         <svg id="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
@@ -34,38 +34,22 @@
       <h2 class="qc-h2">Scanner</h2>
 
       <div class="scan-tiles vertical">
-        <!-- Bouton live (caméra) -->
+        <!-- Scan live (caméra) -->
         <button type="button" id="btn-scan-live" class="scan-tile" aria-label="Scanner en direct">
           <span class="scan-icon">
             <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+              <rect x="4" y="4" width="56" height="24" fill="none" stroke="currentColor" stroke-width="1.5"/>
               <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
             </svg>
           </span>
           <span class="scan-label">Scanner (live)</span>
         </button>
 
-        <!-- Bouton photo -->
+        <!-- Scan via photo -->
         <button type="button" id="btn-capture" class="scan-tile" aria-label="Scanner via photo">
           <span class="scan-icon">
             <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+              <rect x="4" y="4" width="56" height="24" fill="none" stroke="currentColor" stroke-width="1.5"/>
               <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
             </svg>
           </span>
@@ -73,7 +57,14 @@
         </button>
       </div>
 
-      <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none"/>
+      <!-- Input photo (prise caméra) -->
+      <input
+        type="file"
+        id="photoInput"
+        accept="image/*"
+        capture="environment"
+        style="display:none"
+      />
 
       <div class="qc-preview">
         <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:10px;border:1px solid var(--qc-border);" />
@@ -102,8 +93,11 @@
           <label for="type">Type de mobilier</label>
           <select id="type" required>
             <option value="">— Sélectionner —</option>
-            <option>Bureau</option><option>Chaise</option><option>Armoire</option>
-            <option>Table de réunion</option><option>Autre</option>
+            <option>Bureau</option>
+            <option>Chaise</option>
+            <option>Armoire</option>
+            <option>Table de réunion</option>
+            <option>Autre</option>
           </select>
         </div>
         <div id="field-type-autre" class="qc-field" hidden>
@@ -153,7 +147,6 @@
   <!-- Flash visuel, Loader, Toast -->
   <div id="flash" class="qc-flash"></div>
 
-  <!-- Loader overlay -->
   <div id="loader" hidden>
     <div class="loader-backdrop"></div>
     <div class="loader-card">
@@ -162,7 +155,6 @@
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast" hidden>Message…</div>
 
   <script src="./app.js"></script>
