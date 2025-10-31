@@ -1,52 +1,19 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f6f8fa" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta name="theme-color" content="#f6f8fa"/>
   <title>Inventaire ONU</title>
 
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="icon" href="./favicon.ico" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="manifest" href="./manifest.webmanifest"/>
+  <link rel="icon" href="./favicon.ico"/>
+  <link rel="stylesheet" href="./styles.css"/>
 
-  <!-- Librairies (export Excel + fallback QR) -->
+  <!-- Librairies (export Excel + fallback QR si besoin) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" defer></script>
-
-  <style>
-    /* ========== Style des capsules scanner ========== */
-    .scan-tiles {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      justify-content: flex-start;
-      margin: 10px 0 8px;
-    }
-    .scan-tile {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      border: 1px solid #d0d7de;
-      border-radius: 10px;
-      background: #fff;
-      color: #111;
-      font-weight: 600;
-      font-size: 14px;
-      cursor: pointer;
-      transition: background .15s, border-color .15s, transform .1s;
-    }
-    .scan-tile:hover { background: #f6f8fa; border-color: #c5ccd3; transform: translateY(-1px); }
-    .scan-tile:active { transform: translateY(0); }
-    .scan-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; }
-    .scan-label { font-weight: 600; color: #111; }
-    /* Mode sombre */
-    :root[data-theme="dark"] .scan-tile { background: #1b1d21; color: #e5e7eb; border-color: #30363d; }
-    :root[data-theme="dark"] .scan-tile:hover { background: #23272d; }
-  </style>
 </head>
-
 <body>
   <header class="qc-header">
     <div class="qc-head-left">
@@ -55,94 +22,108 @@
     </div>
     <div class="qc-head-right">
       <button id="btn-theme" class="qc-icon-btn" aria-label="Changer de thème" aria-pressed="false">
-        <svg id="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 
-          1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 
-          7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 
-          1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/>
-        </svg>
-        <svg id="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" hidden>
-          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-        </svg>
+        <svg id="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+        <svg id="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
     </div>
   </header>
 
   <main class="qc-container">
-    <!-- Bloc scanner -->
+    <!-- SCANNER -->
     <section class="qc-card">
-  <h2 class="qc-h2">Scanner</h2>
+      <h2 class="qc-h2">Scanner</h2>
 
-  <div class="scan-tiles vertical">
-    <!-- Bouton live (caméra) -->
-    <button type="button" id="btn-scan-live" class="scan-tile">
-      <span class="scan-icon">
-        <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-          <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
-        </svg>
-      </span>
-      <span class="scan-label">Scanner (live)</span>
-    </button>
+      <div class="scan-tiles vertical">
+        <!-- Bouton live (caméra) -->
+        <button type="button" id="btn-scan-live" class="scan-tile" aria-label="Scanner en direct">
+          <span class="scan-icon">
+            <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
+              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
+            </svg>
+          </span>
+          <span class="scan-label">Scanner (live)</span>
+        </button>
 
-    <!-- Bouton photo -->
-    <button type="button" id="btn-capture" class="scan-tile">
-      <span class="scan-icon">
-        <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
-          <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
-          <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
-          <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
-        </svg>
-      </span>
-      <span class="scan-label">Scanner (photo)</span>
-    </button>
-  </div>
+        <!-- Bouton photo -->
+        <button type="button" id="btn-capture" class="scan-tile" aria-label="Scanner via photo">
+          <span class="scan-icon">
+            <svg viewBox="0 0 64 32" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="4" width="56" height="24" fill="none" stroke="#000" stroke-width="1.5"/>
+              <line x1="8" y1="6" x2="8" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="14" y1="6" x2="14" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="20" y1="6" x2="20" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="26" y1="6" x2="26" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="32" y1="6" x2="32" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="38" y1="6" x2="38" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="44" y1="6" x2="44" y2="26" stroke="#000" stroke-width="2"/>
+              <line x1="50" y1="6" x2="50" y2="26" stroke="#000" stroke-width="1.2"/>
+              <line x1="4" y1="16" x2="60" y2="16" stroke="#ff6a00" stroke-width="1"/>
+            </svg>
+          </span>
+          <span class="scan-label">Scanner (photo)</span>
+        </button>
+      </div>
 
-  <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+      <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none"/>
 
-  <div class="qc-preview">
-    <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:10px;border:1px solid var(--qc-border);" />
-    <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
-    <div id="status" class="qc-status">Prêt.</div>
-  </div>
-</section>
+      <div class="qc-preview">
+        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:10px;border:1px solid var(--qc-border);" />
+        <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
+        <div id="status" class="qc-status">Prêt.</div>
+      </div>
+    </section>
 
-    <!-- Formulaire -->
+    <!-- FORMULAIRE -->
     <section class="qc-card">
       <h2 class="qc-h2">Formulaire</h2>
       <form id="form" class="qc-form-grid">
-        <div class="qc-field"><label for="code">Code scanné</label><input id="code" required></div>
-        <div class="qc-field"><label for="from">Emplacement de départ</label><input id="from" value="Voie Creuse" required></div>
-        <div class="qc-field"><label for="to">Emplacement de destination</label><input id="to" value="Bibliothèque" required></div>
-        <div class="qc-field"><label for="type">Type de mobilier</label>
-          <select id="type" required><option>Bureau</option><option>Chaise</option><option>Armoire</option>
-          <option>Table de réunion</option><option>Autre</option></select></div>
-        <div id="field-type-autre" class="qc-field" hidden><label for="type_autre">Type (autre)</label><input id="type_autre" placeholder="Précisez…"></div>
-        <div class="qc-field"><label for="date_mvt">Date du mouvement</label><input type="date" id="date_mvt" required></div>
+        <div class="qc-field">
+          <label for="code">Code scanné</label>
+          <input id="code" required>
+        </div>
+        <div class="qc-field">
+          <label for="from">Emplacement de départ</label>
+          <input id="from" value="Voie Creuse" required>
+        </div>
+        <div class="qc-field">
+          <label for="to">Emplacement de destination</label>
+          <input id="to" value="Bibliothèque" required>
+        </div>
+        <div class="qc-field">
+          <label for="type">Type de mobilier</label>
+          <select id="type" required>
+            <option value="">— Sélectionner —</option>
+            <option>Bureau</option><option>Chaise</option><option>Armoire</option>
+            <option>Table de réunion</option><option>Autre</option>
+          </select>
+        </div>
+        <div id="field-type-autre" class="qc-field" hidden>
+          <label for="type_autre">Type (autre)</label>
+          <input id="type_autre" placeholder="Précisez…">
+        </div>
+        <div class="qc-field">
+          <label for="date_mvt">Date du mouvement</label>
+          <input type="date" id="date_mvt" required>
+        </div>
 
         <div class="qc-actions">
-          <button type="submit" class="qc-btn primary">Enregistrer</button>
+          <button id="btn-submit" type="submit" class="qc-btn primary">Enregistrer</button>
           <button type="button" id="btn-test" class="qc-btn">Test (mock)</button>
         </div>
+        <div id="api-msg" class="qc-api-msg" aria-live="polite"></div>
       </form>
     </section>
 
-    <!-- Export -->
+    <!-- EXPORT + KPI -->
     <section class="qc-card">
       <div class="qc-pills">
         <span class="qc-pill">Scans aujourd’hui : <b id="count-today">0</b></span>
@@ -163,30 +144,27 @@
     <div class="qc-scanner-box">
       <video id="scannerVideo" autoplay muted playsinline></video>
       <div class="qc-scanner-actions">
-        <button id="scannerStop" class="qc-btn ghost">Stop</button>
-        <button id="scannerClose" class="qc-btn">Fermer</button>
+        <button id="scannerStop" class="qc-btn ghost" type="button">Stop</button>
+        <button id="scannerClose" class="qc-btn" type="button">Fermer</button>
       </div>
     </div>
   </div>
 
+  <!-- Flash visuel, Loader, Toast -->
   <div id="flash" class="qc-flash"></div>
-  <div id="globalLoader" class="qc-loader" style="display:none">
-    <div class="qc-spinner"></div>
-    <div id="loaderMsg">Chargement…</div>
+
+  <!-- Loader overlay -->
+  <div id="loader" hidden>
+    <div class="loader-backdrop"></div>
+    <div class="loader-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loader-text" aria-live="polite">Envoi en cours…</div>
+    </div>
   </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" hidden>Message…</div>
 
   <script src="./app.js"></script>
-  <!-- Loader overlay -->
-<div id="loader" hidden>
-  <div class="loader-backdrop"></div>
-  <div class="loader-card">
-    <div class="spinner" aria-hidden="true"></div>
-    <div class="loader-text" aria-live="polite">Envoi en cours…</div>
-  </div>
-</div>
-
-<!-- Toast (succès / erreur) -->
-<div id="toast" class="toast" hidden>Message…</div>
-
 </body>
 </html>
