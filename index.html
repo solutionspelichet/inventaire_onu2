@@ -4,165 +4,139 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f6f8fa" />
-  <title>Inventaire ONU — Contrôles & Scan</title>
+  <title>Contrôles & Scan</title>
+
+  <!-- PWA (facultatif si tu as déjà manifest/SW) -->
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./favicon.ico" />
+
+  <!-- Feuilles de style -->
   <link rel="stylesheet" href="./styles.css" />
-  <!-- XLSX pour export Excel (utilisé dans app.js) -->
+
+  <!-- Librairies tierces (export + QR fallback) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-  <!-- jsQR (fallback QR uniquement, utilisé par app.js si besoin) -->
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" defer></script>
 </head>
 <body>
-  <!-- Bandeau top -->
-  <header class="header">
-    <div class="header-left">
-      <img src="./logo-pelichet.svg" alt="Pelichet" class="logo" onerror="this.style.display='none'">
-      <h1>Inventaire ONU</h1>
+  <header class="qc-header">
+    <div class="qc-head-left">
+      <img src="./logo-pelichet.svg" alt="Pelichet" class="qc-logo" onerror="this.style.display='none'">
+      <h1 class="qc-title">Contrôles & Scan</h1>
     </div>
-    <div class="header-right">
-      <!-- Thème -->
-      <button id="btn-theme" class="icon-btn" aria-label="Changer de thème" aria-pressed="false">
-        <svg id="icon-sun"   width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h-0v3h0zm0 19v-3h0v3h0zm8-11h3v0h-3v0zM1 12h3v0H1v0zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+    <div class="qc-head-right">
+      <button id="btn-theme" class="qc-icon-btn" aria-label="Changer de thème" aria-pressed="false" title="Thème clair/sombre">
+        <svg id="icon-sun"   width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6.76 4.84l-1.8-1.79-1.41 1.41 1.79 1.8 1.42-1.42zm10.45-1.79l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 4V1h0v3zm0 19v-3h0v3zm8-11h3v0h-3zM1 12h3v0H1zm15.24 7.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
         <svg id="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
       </button>
-      <!-- Installer PWA -->
-      <button id="btn-install" class="btn ghost" hidden>Installer</button>
     </div>
   </header>
 
-  <main class="container">
-    <!-- Statut/API feedback -->
-    <div id="api-msg" class="api-msg" role="status" aria-live="polite"></div>
+  <main class="qc-container">
+    <!-- Message API -->
+    <div id="api-msg" class="qc-api-msg" role="status" aria-live="polite"></div>
 
-    <!-- Carte formulaire -->
-    <section class="card">
-      <h2>Saisie & Scan</h2>
+    <!-- Carte de saisie -->
+    <section class="qc-card">
+      <h2 class="qc-h2">Saisie & Scan</h2>
 
-      <form id="form" class="form-grid">
-        <div class="grid-2">
-          <div class="field">
+      <form id="form" class="qc-form-grid">
+        <div class="qc-grid-2">
+          <div class="qc-field">
             <label for="date_mvt">Date</label>
-            <input type="date" id="date_mvt" name="date_mvt" required />
+            <input type="date" id="date_mvt" required>
           </div>
-          <div class="field">
+          <div class="qc-field">
             <label for="code">Code scanné</label>
-            <input type="text" id="code" name="code" inputmode="numeric" autocomplete="off" placeholder="EAN-/Code128-/Code39-/QR…" required />
+            <input type="text" id="code" inputmode="numeric" autocomplete="off" placeholder="EAN-13 / Code128 / Code39 / QR…" required>
           </div>
         </div>
 
-        <div class="grid-3">
-          <div class="field">
+        <div class="qc-grid-3">
+          <div class="qc-field">
             <label for="from">De (départ)</label>
-            <input type="text" id="from" name="from" placeholder="Ex. Voie Creuse" required />
+            <input type="text" id="from" placeholder="Ex. Voie Creuse" required>
           </div>
-          <div class="field">
+          <div class="qc-field">
             <label for="to">Vers (destination)</label>
-            <input type="text" id="to" name="to" placeholder="Ex. Bibliothèque" required />
+            <input type="text" id="to" placeholder="Ex. Bibliothèque" required>
           </div>
-          <div class="field">
+          <div class="qc-field">
             <label for="type">Type mobilier</label>
-            <select id="type" name="type" required>
+            <select id="type" required>
               <option value="" disabled selected>— Sélectionner —</option>
-              <option>Bureau</option>
-              <option>Chaise</option>
-              <option>Armoire</option>
-              <option>Caisson roulant</option>
-              <option>Table de réunion</option>
-              <option>Table basse</option>
-              <option>Cabine acoustique</option>
-              <option>Poste informatique</option>
-              <option>Canapé</option>
-              <option>Vestiaire</option>
-              <option>Autre</option>
+              <option>Bureau</option><option>Chaise</option><option>Armoire</option>
+              <option>Caisson roulant</option><option>Table de réunion</option><option>Table basse</option>
+              <option>Cabine acoustique</option><option>Poste informatique</option><option>Canapé</option>
+              <option>Vestiaire</option><option>Autre</option>
             </select>
           </div>
         </div>
 
-        <div id="field-type-autre" class="field" hidden>
+        <div id="field-type-autre" class="qc-field" hidden>
           <label for="type_autre">Type (autre)</label>
-          <input type="text" id="type_autre" name="type_autre" placeholder="Précisez…" />
+          <input type="text" id="type_autre" placeholder="Précisez…">
         </div>
 
-        <!-- Actions Scan -->
-        <div class="actions">
-          <div class="actions-left">
-            <button type="button" id="btn-scan-live" class="btn">Scan (caméra)</button>
-            <button type="button" id="btn-capture" class="btn outline">Scanner (photo)</button>
-            <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none" />
+        <div class="qc-actions">
+          <div class="qc-actions-left">
+            <button type="button" id="btn-scan-live" class="qc-btn">Scan (caméra)</button>
+            <button type="button" id="btn-capture" class="qc-btn outline">Scanner (photo)</button>
+            <input type="file" id="photoInput" accept="image/*;capture=camera,image/heic,image/heif" style="display:none">
           </div>
-          <div class="actions-right">
-            <button type="button" id="btn-test" class="btn ghost">Remplir de test</button>
-            <button type="submit" class="btn primary">Enregistrer</button>
+          <div class="qc-actions-right">
+            <button type="button" id="btn-test" class="qc-btn ghost">Remplir test</button>
+            <button type="submit" class="qc-btn primary">Enregistrer</button>
           </div>
         </div>
       </form>
 
-      <!-- Prévisualisation -->
-      <div class="preview-wrap">
-        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:12px;border:1px solid var(--border);" />
+      <div class="qc-preview">
+        <img id="preview" alt="Aperçu" style="display:none;max-width:100%;border-radius:12px;border:1px solid var(--qc-border);" />
         <canvas id="canvas" width="640" height="480" style="display:none"></canvas>
-        <div id="status" class="status">Prêt.</div>
+        <div id="status" class="qc-status">Prêt.</div>
       </div>
 
-      <!-- Infos du jour -->
-      <div class="pill-row">
-        <span class="pill">Contrôles du jour : <b id="count-today">0</b></span>
-        <span class="pill">Version : <b>2.3.0</b></span>
+      <div class="qc-pills">
+        <span class="qc-pill">Contrôles du jour : <b id="count-today">0</b></span>
+        <span class="qc-pill">Version : <b>2.3.0</b></span>
       </div>
     </section>
 
     <!-- Export -->
-    <section class="card">
-      <h2>Export Excel (CSV→XLSX)</h2>
-      <div class="grid-3">
-        <div class="field">
+    <section class="qc-card">
+      <h2 class="qc-h2">Export Excel</h2>
+      <div class="qc-grid-3">
+        <div class="qc-field">
           <label for="export_from">Du</label>
           <input type="date" id="export_from" />
         </div>
-        <div class="field">
+        <div class="qc-field">
           <label for="export_to">Au</label>
           <input type="date" id="export_to" />
         </div>
-        <div class="field">
+        <div class="qc-field">
           <label>&nbsp;</label>
-          <button id="btn-download-xls" class="btn primary">Télécharger XLSX</button>
+          <button id="btn-download-xls" class="qc-btn primary">Télécharger XLSX</button>
         </div>
       </div>
     </section>
   </main>
 
-  <!-- Modale iOS A2HS -->
-  <div id="ios-a2hs" class="modal" hidden>
-    <div class="modal-card ios-a2hs-card">
-      <h3>Installer sur l’écran d’accueil (iPhone/iPad)</h3>
-      <ol>
-        <li>Appuyez sur <b>Partager</b> (icône carré avec flèche)</li>
-        <li>Choisissez <b>Ajouter à l’écran d’accueil</b></li>
-      </ol>
-      <div class="modal-actions">
-        <button id="ios-a2hs-close" class="btn">Compris</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modale Scanner -->
-  <div id="scannerModal" class="scanner-modal" style="display:none">
-    <div class="scanner-box">
+  <!-- Modale scanner (styles scopés pour ne pas impacter ton layout) -->
+  <div id="scannerModal" class="qc-scanner-modal" aria-hidden="true" style="display:none">
+    <div class="qc-scanner-box" role="dialog" aria-modal="true" aria-label="Scanner code-barres">
       <video id="scannerVideo" autoplay muted playsinline></video>
-      <div class="scanner-actions">
-        <button type="button" id="scannerStop" class="btn ghost">Stop</button>
-        <button type="button" id="scannerClose" class="btn">Fermer</button>
+      <div class="qc-scanner-actions">
+        <button type="button" id="scannerStop" class="qc-btn ghost">Stop</button>
+        <button type="button" id="scannerClose" class="qc-btn">Fermer</button>
       </div>
     </div>
   </div>
 
-  <!-- Flash visual -->
-  <div id="flash" class="flash"></div>
-
-  <!-- Loader global -->
-  <div id="globalLoader" class="loader" style="display:none">
-    <div class="spinner"></div>
+  <!-- Flash & Loader (scopés) -->
+  <div id="flash" class="qc-flash"></div>
+  <div id="globalLoader" class="qc-loader" style="display:none" role="status" aria-live="polite">
+    <div class="qc-spinner"></div>
     <div id="loaderMsg">Chargement…</div>
   </div>
 
