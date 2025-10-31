@@ -93,3 +93,44 @@ body{
 
 /* API message */
 .qc-api-msg{margin:0 0 12px 0; font-size:14px}
+/* ========= Tuiles scanner (boutons image) ========= */
+.scan-tiles{
+  display:flex;
+  gap:14px;
+  align-items:center;
+  justify-content:center;
+  flex-wrap:wrap;
+  margin:12px 0 6px;
+}
+
+.scan-tile{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:220px;
+  padding:10px 14px;
+  border-radius:12px;
+  border:1px solid var(--qc-border);
+  background:var(--qc-card);
+  color:var(--qc-text);
+  cursor:pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+  transition: transform .06s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.scan-tile:hover{ border-color:#d7dee6; box-shadow:0 2px 10px rgba(0,0,0,.04); transform: translateY(-1px); }
+.scan-tile:active{ transform: translateY(0); }
+.scan-icon{ display:inline-grid; place-items:center; width:38px; height:38px; border-radius:10px; background:rgba(255,106,0,.12); color:#ff6a00; }
+.scan-label{ font-weight:600; }
+
+/* Cartes / Structure proches de ta capture */
+.qc-card-head { display:flex; align-items:end; gap:10px; justify-content:space-between; }
+.qc-muted { color: var(--qc-muted); }
+.qc-footer { text-align:center; color:var(--qc-muted); padding:18px 0 28px; font-size:12px; }
+
+/* Petites retouches pour champs */
+.qc-field input[type="date"]{ min-height:40px; }
+.qc-btn.primary{ font-weight:600; }
+
+/* KPI pill */
+.qc-kpi-row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+.qc-pill{ display:inline-block; padding:6px 12px; background:rgba(148,163,184,.15); border-radius:999px; }
