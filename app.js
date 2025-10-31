@@ -15,14 +15,14 @@
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
 const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
-/* Inventaire ONU — app.js (v2.6.0)
-   - Scanner live : BarcodeDetector → Quagga → ZXing
-   - Scanner via photo (HEIC/HEIF → JPEG si besoin)
+/* Inventaire ONU — app.js (v2.7.0)
+   - Scanner live : BarcodeDetector → ZXing
+   - Scanner via photo : HEIC→JPEG, orientation, redimensionnement, multi-échelles/rotations
    - Compteur du jour, export XLSX (colonne code en texte)
    - Thème Pelichet light/dark, loader + toast
 */
 
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
 /* ---------- Utils DOM ---------- */
@@ -151,28 +151,22 @@ async function onDownloadXls(e){
   }
 }
 
-/* ---------- Scanner : LIVE (BarcodeDetector → Quagga → ZXing) ---------- */
+/* ---------- Scanner LIVE : BarcodeDetector → ZXing ---------- */
 let _stream = null, _nativeDetector = null, _zxingReader = null, _loop = null;
 function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
 async function createBarcodeDetector(){
   const fmts = ["qr_code","ean_13","code_128","code_39","upc_a","ean_8","upc_e","itf"];
   return new window.BarcodeDetector({ formats: fmts });
 }
+async function ensureZXing(){
+  if (window.ZXingBrowser || window.ZXing) return;
+  await loadScriptOnce("https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js");
+}
 async function ensureCamera(video){
   const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio:false });
   _stream = s; video.srcObject = s; await video.play();
 }
 function releaseCamera(){ if (_stream) _stream.getTracks().forEach(t => t.stop()); _stream = null; }
-async function ensureZXing(){
-  if (window.ZXingBrowser || window.ZXing) return;
-  await loadScriptOnce("https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js");
-}
-async function ensureQuagga(){
-  if (window.Quagga) return;
-  // ⚠️ Ajoute libs/quagga.min.js dans ton repo, ou remplace par un CDN fiable
-  await loadScriptOnce(location.origin + location.pathname.replace(/\/[^/]*$/, "/") + "libs/quagga.min.js");
-}
-
 async function startScanner(){
   const video = qs("#scannerVideo"); const modal = qs("#scannerModal");
   if (!video || !modal) return;
@@ -198,23 +192,7 @@ async function startScanner(){
     return;
   } catch { /* fallback */ }
 
-  // 2) Quagga
-  try {
-    await ensureQuagga();
-    if (window.Quagga) {
-      Quagga.init({
-        inputStream: { type: "LiveStream", target: video },
-        decoder: { readers: ["ean_reader","code_128_reader","code_39_reader","upc_reader","itf_reader"] }
-      }, err => { if (err) console.error(err); else Quagga.start(); });
-      Quagga.onDetected(res => {
-        const code = res?.codeResult?.code || "";
-        if (code) { onCodeDetected(code); closeScanner(); }
-      });
-      return;
-    }
-  } catch { /* fallback */ }
-
-  // 3) ZXing
+  // 2) ZXing
   try {
     await ensureZXing();
     const Reader = (window.ZXingBrowser && ZXingBrowser.BrowserMultiFormatReader) || (window.ZXing && ZXing.BrowserMultiFormatReader);
@@ -232,100 +210,191 @@ async function startScanner(){
 function stopScanner(){
   if (_loop) cancelAnimationFrame(_loop);
   _loop = null; _nativeDetector = null;
-  if (window.Quagga && window.Quagga.stop) window.Quagga.stop();
   if (_zxingReader && _zxingReader.reset) _zxingReader.reset();
   releaseCamera();
 }
 function closeScanner(){ stopScanner(); const m = qs("#scannerModal"); if (m) m.style.display = "none"; }
 
-/* ---------- Scanner : PHOTO (HEIC → JPEG) ---------- */
+/* ---------- Scanner PHOTO : HEIC→JPEG, orientation, multi-échelles ---------- */
 let fileBlob = null;
+
 async function ensureHeic2Any(){
   if (window.heic2any) return;
   await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js");
 }
+
+/** Lis un File/Blob en ImageBitmap ou <img> (fallback iOS) */
+async function blobToBitmapOrImage(blob){
+  try {
+    return await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  } catch {
+    const url = URL.createObjectURL(blob);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = url;
+    });
+    URL.revokeObjectURL(url);
+    return img;
+  }
+}
+
+/** Redimensionne pour éviter canvas géant (perf mobile) */
+function drawResizedToCanvas(source, maxW = 1600, maxH = 1600){
+  const srcW = source.width || source.videoWidth || source.naturalWidth || source.canvas?.width || 0;
+  const srcH = source.height || source.videoHeight || source.naturalHeight || source.canvas?.height || 0;
+  if (!srcW || !srcH) throw new Error('Image invalide');
+
+  const ratio = Math.min(maxW / srcW, maxH / srcH, 1);
+  const w = Math.max(1, Math.round(srcW * ratio));
+  const h = Math.max(1, Math.round(srcH * ratio));
+
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, w, h);
+  return c;
+}
+
+/** Boost léger contraste/luminance pour aider la lecture des barres */
+function preprocessCanvas(ctx, w, h) {
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+  const gamma = 0.9, contrast = 1.2, mid = 128;
+  for (let i=0; i<d.length; i+=4) {
+    let r=d[i], g=d[i+1], b=d[i+2];
+    r = 255*Math.pow(r/255, gamma);
+    g = 255*Math.pow(g/255, gamma);
+    b = 255*Math.pow(b/255, gamma);
+    r = (r - mid)*contrast + mid;
+    g = (g - mid)*contrast + mid;
+    b = (b - mid)*contrast + mid;
+    d[i]   = r < 0 ? 0 : r > 255 ? 255 : r;
+    d[i+1] = g < 0 ? 0 : g > 255 ? 255 : g;
+    d[i+2] = b < 0 ? 0 : b > 255 ? 255 : b;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/** Déclenché après choix/prise de photo */
 async function onPhotoPicked(ev){
   const file = ev.target.files && ev.target.files[0];
-  if (!file) { fileBlob = null; if (previewEl) previewEl.style.display="none"; setStatus("Aucune photo choisie."); return; }
+  previewEl && (previewEl.style.display = 'none');
+
+  if (!file) { setStatus('Aucune photo choisie.'); return; }
+
+  // Conversion HEIC/HEIF → JPEG si besoin (iOS surtout)
   let blob = file;
   if (/heic|heif/i.test(file.type) || /\.heic$/i.test(file.name)) {
-    try { await ensureHeic2Any(); blob = await heic2any({ blob:file, toType:"image/jpeg", quality:0.95 }); } catch {}
+    try { await ensureHeic2Any(); blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.95 }); }
+    catch { /* on tente quand même sans conversion */ }
   }
-  fileBlob = blob;
-  const url = URL.createObjectURL(blob);
-  if (previewEl) { previewEl.src = url; previewEl.style.display = "block"; }
 
-  setStatus("Décodage en cours…");
-  setTimeout(decodePhoto, 0);
-}
-function preprocessCanvas(ctx, w, h) {
-  const img = ctx.getImageData(0,0,w,h), d = img.data;
-  const gamma = 0.9, contrast = 1.15, mid = 128;
-  for (let i=0;i<d.length;i+=4){
-    let r=d[i], g=d[i+1], b=d[i+2];
-    r = 255*Math.pow(r/255, gamma); g = 255*Math.pow(g/255, gamma); b = 255*Math.pow(b/255, gamma);
-    r = (r-mid)*contrast + mid; g = (g-mid)*contrast + mid; b = (b-mid)*contrast + mid;
-    d[i] = Math.max(0,Math.min(255,r)); d[i+1]=Math.max(0,Math.min(255,g)); d[i+2]=Math.max(0,Math.min(255,b));
-  }
-  ctx.putImageData(img,0,0);
-}
-async function tryBarcodeDetectorOn(canvas){
-  if (!hasBarcodeDetector()) return null;
   try {
-    const det = await createBarcodeDetector();
-    const bmp = await createImageBitmap(canvas);
-    const r = await det.detect(bmp);
-    return (r && r[0] && r[0].rawValue) ? r[0].rawValue : null;
-  } catch { return null; }
-}
-function tryZXingFromCanvas(canvas){
-  try{
-    const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-    const bin = new ZXing.HybridBinarizer(luminance);
-    const bmp = new ZXing.BinaryBitmap(bin);
-    const reader = new ZXing.MultiFormatReader();
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E
-    ]);
-    reader.setHints(hints);
-    const res = reader.decode(bmp);
-    if (res && res.getText) return res.getText();
-  }catch(_){}
-  return null;
-}
-async function decodePhoto(){
-  if (!fileBlob) return;
-  let bitmap;
-  try { bitmap = await createImageBitmap(fileBlob, { imageOrientation: "from-image" }); }
-  catch {
-    const img = await new Promise((res,rej)=>{ const u = URL.createObjectURL(fileBlob); const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=u; });
-    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext("2d").drawImage(img,0,0); bitmap = c;
-  }
-  const width = bitmap.width || bitmap.canvas?.width, height = bitmap.height || bitmap.canvas?.height;
-  const scales=[1.0,0.8,0.6,0.45], rotations=[0,90,180,270];
-  const canvas = canvasEl;
-  for (const scale of scales) for (const rot of rotations) {
-    const targetW = Math.max(240, Math.round(width * scale));
-    const targetH = Math.max(240, Math.round(height * scale));
-    const w = (rot % 180 === 0) ? targetW : targetH; const h = (rot % 180 === 0) ? targetH : targetW;
-    canvas.width = w; canvas.height = h;
-    const ctx2 = canvas.getContext("2d", { willReadFrequently: true });
-    ctx2.save(); ctx2.translate(w/2, h/2); ctx2.rotate(rot * Math.PI/180);
-    ctx2.drawImage(bitmap, -targetW/2, -targetH/2, targetW, targetH); ctx2.restore();
-    preprocessCanvas(ctx2, w, h);
+    setStatus('Préparation de l’image…');
+    const bmpOrImg = await blobToBitmapOrImage(blob);
+    const baseCanvas = drawResizedToCanvas(bmpOrImg, 1600, 1600);
 
-    const bd = await tryBarcodeDetectorOn(canvas); if (bd) { showPreview(canvas); onCodeDetected(bd); return; }
-    await ensureZXing();
-    const zx = tryZXingFromCanvas(canvas); if (zx) { showPreview(canvas); onCodeDetected(zx); return; }
+    // aperçu instantané
+    showPreview(baseCanvas);
+
+    setStatus('Décodage en cours…');
+    await ensureZXing(); // on aura ZXing prêt
+
+    const scales = [1.0, 0.8, 0.6, 0.45];
+    const rotations = [0, 90, 180, 270];
+
+    for (const scale of scales) {
+      const scaled = drawResizedToCanvas(baseCanvas, Math.round(baseCanvas.width * scale), Math.round(baseCanvas.height * scale));
+      const ctxBase = scaled.getContext('2d', { willReadFrequently: true });
+      preprocessCanvas(ctxBase, scaled.width, scaled.height);
+
+      for (const rot of rotations) {
+        const w = (rot % 180 === 0) ? scaled.width : scaled.height;
+        const h = (rot % 180 === 0) ? scaled.height : scaled.width;
+
+        canvasEl.width = w; canvasEl.height = h;
+        const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+
+        ctx.save();
+        ctx.translate(w/2, h/2);
+        ctx.rotate(rot * Math.PI/180);
+        ctx.drawImage(scaled, -scaled.width/2, -scaled.height/2);
+        ctx.restore();
+
+        // 1) Natif BarcodeDetector si dispo
+        if ('BarcodeDetector' in window) {
+          try {
+            const det = new window.BarcodeDetector({
+              formats: ['qr_code','ean_13','code_128','code_39','upc_a','ean_8','upc_e','itf']
+            });
+            const bmp = await createImageBitmap(canvasEl);
+            const r = await det.detect(bmp);
+            if (r && r[0] && r[0].rawValue) {
+              onCodeDetected(r[0].rawValue); showPreview(canvasEl); setStatus('Code détecté ✅'); return;
+            }
+          } catch {}
+        }
+
+        // 2) ZXing (canvas)
+        try {
+          const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvasEl);
+          const bin = new ZXing.HybridBinarizer(luminance);
+          const bmp = new ZXing.BinaryBitmap(bin);
+          const reader = new ZXing.MultiFormatReader();
+          const hints = new Map();
+          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.QR_CODE,
+            ZXing.BarcodeFormat.CODE_128,
+            ZXing.BarcodeFormat.EAN_13,
+            ZXing.BarcodeFormat.CODE_39,
+            ZXing.BarcodeFormat.ITF,
+            ZXing.BarcodeFormat.UPC_A,
+            ZXing.BarcodeFormat.UPC_E,
+          ]);
+          reader.setHints(hints);
+          const res = reader.decode(bmp);
+          if (res && res.getText) { onCodeDetected(res.getText()); showPreview(canvasEl); setStatus('Code détecté ✅'); return; }
+        } catch {}
+
+        // 3) jsQR (QR uniquement)
+        if (window.jsQR) {
+          try {
+            const img = ctx.getImageData(0,0,w,h);
+            const qr = jsQR(img.data, w, h);
+            if (qr && qr.data) { onCodeDetected(qr.data); showPreview(canvasEl); setStatus('Code détecté (QR) ✅'); return; }
+          } catch {}
+        }
+      }
+    }
+
+    showPreview(baseCanvas);
+    setStatus('Aucun code détecté. Reprenez une photo (plus proche, nette, bonne lumière).');
+
+  } catch (err) {
+    console.error(err);
+    setStatus('Erreur lors du traitement de la photo.');
+    showToast('Échec décodage photo', 'error');
+  } finally {
+    const input = document.getElementById('photoInput');
+    if (input) input.value = '';
   }
-  showPreview(canvas);
-  setStatus("Aucun code détecté. Reprenez la photo (plus net, plus proche, meilleure lumière).");
 }
-function showPreview(canvas){
-  try{ const url = canvas.toDataURL("image/png"); if (previewEl) { previewEl.src = url; previewEl.style.display = "block"; } }catch(_){}
+
+/** Affiche l’aperçu (image finale ou canvas) */
+function showPreview(canvasOrImg) {
+  try {
+    let url = null;
+    if (canvasOrImg instanceof HTMLCanvasElement) {
+      url = canvasOrImg.toDataURL('image/jpeg', 0.9);
+    } else if (canvasOrImg instanceof HTMLImageElement) {
+      const c = document.createElement('canvas');
+      c.width = canvasOrImg.naturalWidth || canvasOrImg.width;
+      c.height = canvasOrImg.naturalHeight || canvasOrImg.height;
+      c.getContext('2d').drawImage(canvasOrImg, 0, 0);
+      url = c.toDataURL('image/jpeg', 0.9);
+    }
+    if (url && previewEl) { previewEl.src = url; previewEl.style.display = 'block'; }
+  } catch (_) {}
 }
 
 /* ---------- Envoi backend ---------- */
@@ -422,10 +491,10 @@ document.addEventListener("DOMContentLoaded", () => {
   qs("#form")?.addEventListener("submit", onSubmit);
   qs("#btn-test")?.addEventListener("click", () => {
     const codeEl = qs("#code"); if (codeEl) codeEl.value = "TEST-QR-123";
-    const fromEl = qs("#from"); if (fromEl && !fromEl.value) fromEl.value = "Voie Creuse";
-    const toEl = qs("#to"); if (toEl && !toEl.value) toEl.value = "Bibliothèque";
+    const fromEl2 = qs("#from"); if (fromEl2 && !fromEl2.value) fromEl2.value = "Voie Creuse";
+    const toEl2 = qs("#to"); if (toEl2 && !toEl2.value) toEl2.value = "Bibliothèque";
     const typeEl = qs("#type"); if (typeEl && !typeEl.value) { typeEl.value = "Bureau"; typeEl.dispatchEvent(new Event("change")); }
-    const dateEl = qs("#date_mvt"); if (dateEl) dateEl.value = todayISO;
+    const dateEl2 = qs("#date_mvt"); if (dateEl2) dateEl2.value = todayISO;
     setStatus("Champs de test remplis. Appuyez sur “Enregistrer”.");
   });
 
