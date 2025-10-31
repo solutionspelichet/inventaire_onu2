@@ -203,3 +203,6 @@ input:focus-visible, select:focus-visible {
 /* ===================== États utiles ===================== */
 .ok    { color: #22c55e; }
 .error { color: #ef4444; }
+.scanner-modal { position:fixed; inset:0; display:grid; place-items:center; background:rgba(0,0,0,0.6); z-index:9999; }
+.scanner-box { width:min(640px,96vw); background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; display:grid; gap:12px; }
+.scanner-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
