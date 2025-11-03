@@ -22,9 +22,7 @@ const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYG
    - Compteur du jour, thème Pelichet, loader + toast, messages d’état
 */
 
-/* ========= CONFIG ========= */
-/** ⚠️ REMPLACE par ton URL COMPLETE /exec (ex.: "https://script.google.com/macros/s/AKfycbyy826nPPtVXXXXXXXXXXXX/exec") */
-const API_BASE = "https://script.google.com/macros/s/AKfycbyy826nPPtV.../exec";
+
 const APP_VERSION = "3.3.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
