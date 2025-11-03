@@ -15,14 +15,14 @@
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
 const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
-/* Inventaire ONU — app.js (v2.9.0)
-   - Scanner live : BarcodeDetector (natif) → ZXing (fallback), ROI centrale, zoom/torche, autofocus, anti-faux positifs
+/* Inventaire ONU — app.js (v3.2.0)
+   - Scanner live ++ : autofocus/zoom/torch + tap-to-focus + ROI adaptative + sur-échantillonnage + anti-faux positifs
    - Scanner photo : HEIC→JPEG, orientation, redimensionnement, multi-échelles/rotations (BarcodeDetector → ZXing → jsQR)
    - Export XLSX : colonne code_scanné forcée en texte + largeur adaptée
    - Compteur du jour, thème Pelichet, loader + toast, messages d’état
 */
 
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "3.2.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
 /* -------------------- Utils DOM -------------------- */
@@ -153,11 +153,20 @@ async function onDownloadXls(e){
 }
 
 /* =========================================================
-   SCANNER LIVE FIABLE : autofocus/zoom/torch + ROI + validation
+   SCANNER LIVE ++ : autofocus/zoom/torch + tap-to-focus + ROI adaptative + sur-échantillonnage
    ========================================================= */
-let _stream = null, _loop = null, _nativeDetector = null, _zxingReader = null;
+let _stream = null, _nativeDetector = null;
 let _lastText = "", _streak = 0, _decoding = false;
-let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 }; // zone centrale (en %)
+let _loopHold = false;
+let _track = null, _caps = {}, _settings = {};
+let _zoomSupported = false, _focusDistSupported = false, _focusModeSupported = false;
+
+let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 };   // ROI par défaut (centrale)
+const _roiMacro = { x: 0.30, y: 0.35, w: 0.40, h: 0.30 }; // ROI plus petite pour petits codes
+let _useMacro = false;
+let _noHitFrames = 0;                  // frames sans lecture
+const _noHitMacroThreshold = 35;       // ~2-3s → macro mode
+const _noHitZoomStepThreshold = 20;    // ~1.3s → pas de zoom
 
 function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
 async function ensureZXing(){
@@ -167,24 +176,22 @@ async function ensureZXing(){
 
 function validateEAN13(code){
   if (!/^\d{13}$/.test(code)) return false;
-  const digits = code.split("").map(d=>+d);
-  const sum = digits.slice(0,12).reduce((acc, d, i)=> acc + d * (i%2===0 ? 1 : 3), 0);
-  const check = (10 - (sum % 10)) % 10;
-  return check === digits[12];
+  const d = code.split("").map(Number);
+  const sum = d.slice(0,12).reduce((a, x, i)=> a + x * (i%2===0 ? 1 : 3), 0);
+  return ((10 - (sum % 10)) % 10) === d[12];
 }
 function validateUPCA(code){
   if (!/^\d{12}$/.test(code)) return false;
-  const digits = code.split("").map(d=>+d);
-  const sum = digits.slice(0,11).reduce((acc, d, i)=> acc + d * (i%2===0 ? 3 : 1), 0);
-  const check = (10 - (sum % 10)) % 10;
-  return check === digits[11];
+  const d = code.split("").map(Number);
+  const sum = d.slice(0,11).reduce((a, x, i)=> a + x * (i%2===0 ? 3 : 1), 0);
+  return ((10 - (sum % 10)) % 10) === d[11];
 }
-function plausible(format, text){
+function plausible(fmt, text){
   if (!text) return false;
-  const f = String(format || "");
+  const f = String(fmt || "");
   if (f === "ean_13" || /EAN_13$/i.test(f)) return validateEAN13(text);
   if (f === "upc_a" || /UPC_A$/i.test(f)) return validateUPCA(text);
-  if (/QR/i.test(f) || f === "qr_code") return text.length > 0; // QR: pas de checksum standard
+  if (/QR/i.test(f) || f === "qr_code") return text.length > 0;
   if (/CODE_128|code_128|CODE_39|code_39/.test(f)) return text.length >= 4;
   if (/EAN_8/i.test(f)) return /^\d{8}$/.test(text);
   if (/UPC_E/i.test(f)) return /^\d{8}$/.test(text);
@@ -197,8 +204,9 @@ async function ensureCamera(video){
     audio: false,
     video: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, max: 30 },
       focusMode: "continuous"
     }
   };
@@ -207,38 +215,79 @@ async function ensureCamera(video){
   video.srcObject = s;
   await video.play();
 
-  const track = s.getVideoTracks()[0];
-  const caps = track.getCapabilities?.() || {};
-  const settings = track.getSettings?.() || {};
+  _track = s.getVideoTracks()[0];
+  _caps = _track.getCapabilities?.() || {};
+  _settings = _track.getSettings?.() || {};
 
-  // autofocus continu si supporté
-  if (caps.focusMode && caps.focusMode.includes("continuous")) {
-    try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
+  _zoomSupported = !!_caps.zoom;
+  _focusModeSupported = Array.isArray(_caps.focusMode);
+  _focusDistSupported = typeof _caps.focusDistance?.min === "number" && typeof _caps.focusDistance?.max === "number";
+
+  // Autofocus continu si dispo
+  if (_focusModeSupported && _caps.focusMode.includes("continuous")) {
+    try { await _track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
   }
 
-  // Zoom UI si supporté
+  // UI zoom
   const zoomWrap = document.getElementById("zoomWrap");
   const zoomSlider = document.getElementById("zoomSlider");
-  if (caps.zoom && zoomSlider && zoomWrap) {
+  if (_zoomSupported && zoomSlider && zoomWrap) {
     zoomWrap.hidden = false;
-    const min = caps.zoom.min ?? 1, max = caps.zoom.max ?? 5, step = caps.zoom.step ?? 0.1;
+    const min = _caps.zoom.min ?? 1, max = _caps.zoom.max ?? 5, step = _caps.zoom.step ?? 0.1;
     zoomSlider.min = String(min); zoomSlider.max = String(max); zoomSlider.step = String(step);
-    zoomSlider.value = String(settings.zoom ?? min);
-    zoomSlider.oninput = async () => {
-      try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomSlider.value) }] }); } catch {}
-    };
+    zoomSlider.value = String(_settings.zoom ?? min);
+    zoomSlider.oninput = async () => { await setZoom(Number(zoomSlider.value)); };
+    attachZoomGestures(zoomSlider);
   } else if (zoomWrap) {
     zoomWrap.hidden = true;
   }
 
-  // Torche si supportée
+  // UI focus distance (si exposé)
+  const focusWrap = document.getElementById("focusWrap");
+  const focusSlider = document.getElementById("focusSlider");
+  if (_focusDistSupported && focusWrap && focusSlider) {
+    focusWrap.hidden = false;
+    focusSlider.min = String(_caps.focusDistance.min);
+    focusSlider.max = String(_caps.focusDistance.max);
+    focusSlider.step = String(_caps.focusDistance.step ?? 0.01);
+    focusSlider.value = String(_settings.focusDistance ?? _caps.focusDistance.max);
+    focusSlider.oninput = async () => {
+      _loopHold = true;
+      try {
+        await _track.applyConstraints({ advanced: [{ focusMode: "manual", focusDistance: Number(focusSlider.value) }] });
+        await wait(180);
+        if (_focusModeSupported && _caps.focusMode.includes("continuous")) {
+          await _track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        }
+      } catch {}
+      _loopHold = false;
+    };
+    // Tap-to-focus → focus proche (souvent macro)
+    const videoEl = document.getElementById("scannerVideo");
+    videoEl?.addEventListener("click", async () => {
+      if (!_focusDistSupported) return;
+      _loopHold = true;
+      try {
+        await _track.applyConstraints({ advanced: [{ focusMode: "manual", focusDistance: _caps.focusDistance.min }] });
+        await wait(180);
+        if (_focusModeSupported && _caps.focusMode.includes("continuous")) {
+          await _track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        }
+      } catch {}
+      _loopHold = false;
+    });
+  } else if (focusWrap) {
+    focusWrap.hidden = true;
+  }
+
+  // Torche
   const torchBtn = document.getElementById("torchBtn");
-  if (caps.torch && torchBtn) {
+  if (_caps.torch && torchBtn) {
     torchBtn.hidden = false;
     let torchOn = false;
     torchBtn.onclick = async () => {
       torchOn = !torchOn;
-      try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch {}
+      try { await _track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch {}
       torchBtn.setAttribute("aria-pressed", torchOn ? "true" : "false");
     };
   } else if (torchBtn) {
@@ -246,9 +295,57 @@ async function ensureCamera(video){
   }
 }
 
+function attachZoomGestures(zoomSlider){
+  let lastDist = null;
+  const videoEl = document.getElementById("scannerVideo");
+  if (!videoEl) return;
+
+  // Pinch
+  videoEl.addEventListener("touchmove", async (ev) => {
+    if (ev.touches.length !== 2 || !_zoomSupported) return;
+    ev.preventDefault();
+    const d = Math.hypot(
+      ev.touches[0].clientX - ev.touches[1].clientX,
+      ev.touches[0].clientY - ev.touches[1].clientY
+    );
+    if (lastDist == null) { lastDist = d; return; }
+    const delta = (d - lastDist) * 0.005;
+    lastDist = d;
+    const cur = Number(zoomSlider.value);
+    const next = clamp(cur + delta, Number(zoomSlider.min), Number(zoomSlider.max));
+    if (next !== cur) {
+      zoomSlider.value = String(next);
+      await setZoom(next);
+    }
+  }, { passive: false });
+  videoEl.addEventListener("touchend", ()=> { lastDist = null; });
+
+  // Molette
+  videoEl.addEventListener("wheel", async (ev) => {
+    if (!_zoomSupported) return;
+    ev.preventDefault();
+    const step = (Number(zoomSlider.step) || 0.1) * (ev.deltaY < 0 ? 1 : -1);
+    const cur = Number(zoomSlider.value);
+    const next = clamp(cur + step, Number(zoomSlider.min), Number(zoomSlider.max));
+    if (next !== cur) { zoomSlider.value = String(next); await setZoom(next); }
+  }, { passive: false });
+}
+
+async function setZoom(val){
+  try {
+    _loopHold = true;
+    await _track.applyConstraints({ advanced: [{ zoom: val }] });
+    await wait(120);
+  } catch {}
+  _loopHold = false;
+}
+
+function clamp(v, a, b){ return Math.min(b, Math.max(a, v)); }
+function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+
 function releaseCamera(){
   if (_stream) _stream.getTracks().forEach(t => t.stop());
-  _stream = null;
+  _stream = null; _track = null;
 }
 
 function drawROIFromVideo(video, canvas, roi){
@@ -256,9 +353,13 @@ function drawROIFromVideo(video, canvas, roi){
   if (!vw || !vh) return false;
   const rx = Math.round(roi.x * vw), ry = Math.round(roi.y * vh);
   const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
-  canvas.width = rw; canvas.height = rh;
+
+  // Sur-échantillonnage x2 de la ROI
+  canvas.width = rw * 2; canvas.height = rh * 2;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(video, rx, ry, rw, rh, 0, 0, rw * 2, rh * 2);
   return true;
 }
 
@@ -312,16 +413,8 @@ function acceptIfStable(result){
   if (!plausible(result.format || "", text)) {
     _lastText = ""; _streak = 0; return null;
   }
-  if (text === _lastText) {
-    _streak++;
-  } else {
-    _lastText = text; _streak = 1;
-  }
-  // Exige 2 frames consécutives identiques
-  if (_streak >= 2) {
-    _lastText = ""; _streak = 0;
-    return text;
-  }
+  if (text === _lastText) _streak++; else { _lastText = text; _streak = 1; }
+  if (_streak >= 2) { _lastText = ""; _streak = 0; return text; } // 2 frames identiques
   return null;
 }
 
@@ -329,7 +422,8 @@ function paintGuides(video){
   const overlay = document.getElementById("scanOverlay");
   if (!overlay || !video.videoWidth) return;
   const vw = video.videoWidth, vh = video.videoHeight;
-  const rw = Math.round(_roi.w * vw), rh = Math.round(_roi.h * vh);
+  const roi = _useMacro ? _roiMacro : _roi;
+  const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
   overlay.style.setProperty("--roi-w", rw + "px");
   overlay.style.setProperty("--roi-h", rh + "px");
 }
@@ -337,11 +431,10 @@ function paintGuides(video){
 async function startScanner(){
   const video = qs("#scannerVideo"); const modal = qs("#scannerModal");
   const roiCanvas = document.createElement("canvas");
-
   if (!video || !modal) return;
-  modal.style.display = "grid";
 
-  _lastText = ""; _streak = 0;
+  modal.style.display = "grid";
+  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0;
 
   try { await ensureCamera(video); }
   catch { showToast("Caméra refusée (permissions)", "error"); modal.style.display="none"; return; }
@@ -350,11 +443,12 @@ async function startScanner(){
 
   const step = async () => {
     if (!_stream) return;
-    if (_decoding) { schedule(); return; }
+    if (_loopHold || _decoding) { schedule(); return; }
     _decoding = true;
 
+    const roi = _useMacro ? _roiMacro : _roi;
     try {
-      if (drawROIFromVideo(video, roiCanvas, _roi)) {
+      if (drawROIFromVideo(video, roiCanvas, roi)) {
         const result = await decodeFrame(roiCanvas);
         if (result) {
           const accepted = acceptIfStable(result);
@@ -364,9 +458,25 @@ async function startScanner(){
             _decoding = false;
             return;
           }
+          _noHitFrames++;
+        } else {
+          _noHitFrames++;
         }
       }
-    } catch {}
+    } catch { _noHitFrames++; }
+
+    // Adaptation : zoom progressif & macro
+    if (_noHitFrames > _noHitZoomStepThreshold && _zoomSupported) {
+      const curSet = _track.getSettings?.() || {};
+      const z = curSet.zoom ?? _caps.zoom?.min ?? 1;
+      const next = clamp(z + ((_caps.zoom?.step ?? 0.1) * 1), _caps.zoom?.min ?? 1, _caps.zoom?.max ?? 5);
+      if (next > z + 1e-6) await setZoom(next);
+      _noHitFrames = 0;
+    }
+    if (!_useMacro && _noHitFrames > _noHitMacroThreshold) {
+      _useMacro = true; paintGuides(video);
+    }
+
     _decoding = false;
     schedule();
   };
@@ -383,11 +493,10 @@ async function startScanner(){
 }
 
 function stopScanner(){
-  if (_loop) cancelAnimationFrame(_loop);
-  _loop = null;
+  _loopHold = false;
   _nativeDetector = null;
   releaseCamera();
-  _lastText = ""; _streak = 0;
+  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0;
 }
 function closeScanner(){ stopScanner(); const m = qs("#scannerModal"); if (m) m.style.display = "none"; }
 
