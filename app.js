@@ -15,18 +15,17 @@
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
 const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
-/* Inventaire ONU — app.js (v2.7.0)
-   - Scanner live : BarcodeDetector → ZXing
-   - Scanner via photo : HEIC→JPEG, orientation, redimensionnement, multi-échelles/rotations
-   - Compteur du jour, export XLSX (colonne code en texte)
-   - Thème Pelichet light/dark, loader + toast
+/* Inventaire ONU — app.js (v2.9.0)
+   - Scanner live : BarcodeDetector (natif) → ZXing (fallback), ROI centrale, zoom/torche, autofocus, anti-faux positifs
+   - Scanner photo : HEIC→JPEG, orientation, redimensionnement, multi-échelles/rotations (BarcodeDetector → ZXing → jsQR)
+   - Export XLSX : colonne code_scanné forcée en texte + largeur adaptée
+   - Compteur du jour, thème Pelichet, loader + toast, messages d’état
 */
 
-
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.9.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
-/* ---------- Utils DOM ---------- */
+/* -------------------- Utils DOM -------------------- */
 const qs = (sel, el) => (el || document).querySelector(sel);
 function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
@@ -39,7 +38,7 @@ function loadScriptOnce(src) {
   });
 }
 
-/* ---------- Thème Pelichet ---------- */
+/* -------------------- Thème Pelichet -------------------- */
 function applyTheme(theme) {
   const root = document.documentElement;
   if (theme === "dark") root.setAttribute("data-theme", "dark"); else root.removeAttribute("data-theme");
@@ -57,7 +56,7 @@ function toggleTheme(){
   localStorage.setItem("theme", nxt); applyTheme(nxt);
 }
 
-/* ---------- Loader + Toast + Feedback ---------- */
+/* -------------------- Loader + Toast + Feedback -------------------- */
 let loaderEl, toastEl, submitBtn, statusEl, flashEl, previewEl, canvasEl;
 function showLoader(msg="Envoi en cours…"){
   if (loaderEl) { const t=loaderEl.querySelector(".loader-text"); if (t) t.textContent = msg; loaderEl.hidden = false; }
@@ -96,7 +95,7 @@ function onCodeDetected(text){
   setStatus(`Code détecté : ${text}`);
 }
 
-/* ---------- Compteur ---------- */
+/* -------------------- Compteur jour -------------------- */
 async function refreshTodayCount(){
   try{
     const r = await fetch(`${API_BASE}?route=/stats&day=${todayISO}`, { mode: "cors", credentials: "omit" });
@@ -108,7 +107,7 @@ async function refreshTodayCount(){
   }
 }
 
-/* ---------- Export XLSX ---------- */
+/* -------------------- Export XLSX (CSV → XLSX) -------------------- */
 async function onDownloadXls(e){
   e.preventDefault();
   const from = qs("#export_from")?.value, to = qs("#export_to")?.value;
@@ -121,6 +120,7 @@ async function onDownloadXls(e){
     if (!r.ok) { showToast(`Erreur export (${r.status})`, "error"); return; }
     if (typeof XLSX === "undefined"){ showToast("Librairie Excel indisponible.", "error"); return; }
 
+    // XLSX lit le CSV quand type:"string"
     const wb = XLSX.read(text, { type: "string", raw: true, cellText: false, cellDates: false });
     const first = wb.SheetNames[0];
     if (first !== "Export") {
@@ -152,8 +152,9 @@ async function onDownloadXls(e){
   }
 }
 
-/* ---------- Scanner LIVE : BarcodeDetector → ZXing ---------- */
-/* ---------- Scanner LIVE FIABLE : autofocus/zoom/torch + ROI + validation ---------- */
+/* =========================================================
+   SCANNER LIVE FIABLE : autofocus/zoom/torch + ROI + validation
+   ========================================================= */
 let _stream = null, _loop = null, _nativeDetector = null, _zxingReader = null;
 let _lastText = "", _streak = 0, _decoding = false;
 let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 }; // zone centrale (en %)
@@ -165,7 +166,6 @@ async function ensureZXing(){
 }
 
 function validateEAN13(code){
-  // 13 chiffres, checksum
   if (!/^\d{13}$/.test(code)) return false;
   const digits = code.split("").map(d=>+d);
   const sum = digits.slice(0,12).reduce((acc, d, i)=> acc + d * (i%2===0 ? 1 : 3), 0);
@@ -173,7 +173,6 @@ function validateEAN13(code){
   return check === digits[12];
 }
 function validateUPCA(code){
-  // 12 chiffres, checksum
   if (!/^\d{12}$/.test(code)) return false;
   const digits = code.split("").map(d=>+d);
   const sum = digits.slice(0,11).reduce((acc, d, i)=> acc + d * (i%2===0 ? 3 : 1), 0);
@@ -181,17 +180,15 @@ function validateUPCA(code){
   return check === digits[11];
 }
 function plausible(format, text){
-  // Garde seulement ce qui a du sens
   if (!text) return false;
-  if (format === "ean_13" || /EAN_13$/i.test(format)) return validateEAN13(text);
-  if (format === "upc_a" || /UPC_A$/i.test(format)) return validateUPCA(text);
-  if (/QR/i.test(format) || format === "qr_code") return text.length > 0; // QR: pas de checksum standard
-  // Code128/39 : on refuse < 4 car très bruité
-  if (/CODE_128|code_128|CODE_39|code_39/.test(format)) return text.length >= 4;
-  // EAN-8/UPC-E/ITF : longueur minimale
-  if (/EAN_8/i.test(format)) return /^\d{8}$/.test(text);
-  if (/UPC_E/i.test(format)) return /^\d{8}$/.test(text);
-  if (/ITF/i.test(format)) return /^\d{6,14}$/.test(text);
+  const f = String(format || "");
+  if (f === "ean_13" || /EAN_13$/i.test(f)) return validateEAN13(text);
+  if (f === "upc_a" || /UPC_A$/i.test(f)) return validateUPCA(text);
+  if (/QR/i.test(f) || f === "qr_code") return text.length > 0; // QR: pas de checksum standard
+  if (/CODE_128|code_128|CODE_39|code_39/.test(f)) return text.length >= 4;
+  if (/EAN_8/i.test(f)) return /^\d{8}$/.test(text);
+  if (/UPC_E/i.test(f)) return /^\d{8}$/.test(text);
+  if (/ITF/i.test(f)) return /^\d{6,14}$/.test(text);
   return text.length >= 4;
 }
 
@@ -202,7 +199,7 @@ async function ensureCamera(video){
       facingMode: { ideal: "environment" },
       width: { ideal: 1280 },
       height: { ideal: 720 },
-      focusMode: "continuous" // hint (certains navigateurs l’ignorent)
+      focusMode: "continuous"
     }
   };
   const s = await navigator.mediaDevices.getUserMedia(constraints);
@@ -210,17 +207,16 @@ async function ensureCamera(video){
   video.srcObject = s;
   await video.play();
 
-  // Tente autofocus/zoom/torch via capabilities
   const track = s.getVideoTracks()[0];
   const caps = track.getCapabilities?.() || {};
   const settings = track.getSettings?.() || {};
 
-  // Autofocus continu si supporté
+  // autofocus continu si supporté
   if (caps.focusMode && caps.focusMode.includes("continuous")) {
     try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
   }
 
-  // Expose zoom UI si dispo
+  // Zoom UI si supporté
   const zoomWrap = document.getElementById("zoomWrap");
   const zoomSlider = document.getElementById("zoomSlider");
   if (caps.zoom && zoomSlider && zoomWrap) {
@@ -235,7 +231,7 @@ async function ensureCamera(video){
     zoomWrap.hidden = true;
   }
 
-  // Expose torche si dispo
+  // Torche si supportée
   const torchBtn = document.getElementById("torchBtn");
   if (caps.torch && torchBtn) {
     torchBtn.hidden = false;
@@ -256,7 +252,6 @@ function releaseCamera(){
 }
 
 function drawROIFromVideo(video, canvas, roi){
-  // Copie la zone centrale (ROI) du flux vidéo dans le canvas
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return false;
   const rx = Math.round(roi.x * vw), ry = Math.round(roi.y * vh);
@@ -322,7 +317,7 @@ function acceptIfStable(result){
   } else {
     _lastText = text; _streak = 1;
   }
-  // Exige 2 frames consécutives identiques pour valider
+  // Exige 2 frames consécutives identiques
   if (_streak >= 2) {
     _lastText = ""; _streak = 0;
     return text;
@@ -353,10 +348,9 @@ async function startScanner(){
 
   paintGuides(video);
 
-  // Boucle: ~15 fps max (throttle) avec requestVideoFrameCallback si dispo
   const step = async () => {
-    if (!_stream) return;                // stream stoppé
-    if (_decoding) { schedule(); return; } // évite la pile
+    if (!_stream) return;
+    if (_decoding) { schedule(); return; }
     _decoding = true;
 
     try {
@@ -397,50 +391,37 @@ function stopScanner(){
 }
 function closeScanner(){ stopScanner(); const m = qs("#scannerModal"); if (m) m.style.display = "none"; }
 
-function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
-async function createBarcodeDetector(){
-  c
-
-/* ---------- Scanner PHOTO : HEIC→JPEG, orientation, multi-échelles ---------- */
+/* =========================================================
+   SCANNER PHOTO : HEIC→JPEG, orientation, multi-échelles/rotations
+   ========================================================= */
 let fileBlob = null;
 
 async function ensureHeic2Any(){
   if (window.heic2any) return;
   await loadScriptOnce("https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js");
 }
-
-/** Lis un File/Blob en ImageBitmap ou <img> (fallback iOS) */
 async function blobToBitmapOrImage(blob){
-  try {
-    return await createImageBitmap(blob, { imageOrientation: 'from-image' });
-  } catch {
+  try { return await createImageBitmap(blob, { imageOrientation: 'from-image' }); }
+  catch {
     const url = URL.createObjectURL(blob);
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = url;
-    });
+    const img = await new Promise((resolve, reject) => { const i=new Image(); i.onload=()=>resolve(i); i.onerror=reject; i.src=url; });
     URL.revokeObjectURL(url);
     return img;
   }
 }
-
-/** Redimensionne pour éviter canvas géant (perf mobile) */
 function drawResizedToCanvas(source, maxW = 1600, maxH = 1600){
   const srcW = source.width || source.videoWidth || source.naturalWidth || source.canvas?.width || 0;
   const srcH = source.height || source.videoHeight || source.naturalHeight || source.canvas?.height || 0;
   if (!srcW || !srcH) throw new Error('Image invalide');
-
   const ratio = Math.min(maxW / srcW, maxH / srcH, 1);
   const w = Math.max(1, Math.round(srcW * ratio));
   const h = Math.max(1, Math.round(srcH * ratio));
-
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(source, 0, 0, w, h);
   return c;
 }
-
-/** Boost léger contraste/luminance pour aider la lecture des barres */
 function preprocessCanvas(ctx, w, h) {
   const img = ctx.getImageData(0,0,w,h);
   const d = img.data;
@@ -460,31 +441,25 @@ function preprocessCanvas(ctx, w, h) {
   ctx.putImageData(img, 0, 0);
 }
 
-/** Déclenché après choix/prise de photo */
 async function onPhotoPicked(ev){
   const file = ev.target.files && ev.target.files[0];
   previewEl && (previewEl.style.display = 'none');
-
   if (!file) { setStatus('Aucune photo choisie.'); return; }
 
-  // Conversion HEIC/HEIF → JPEG si besoin (iOS surtout)
   let blob = file;
   if (/heic|heif/i.test(file.type) || /\.heic$/i.test(file.name)) {
     try { await ensureHeic2Any(); blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.95 }); }
-    catch { /* on tente quand même sans conversion */ }
+    catch { /* on essaie sans conversion */ }
   }
 
   try {
     setStatus('Préparation de l’image…');
     const bmpOrImg = await blobToBitmapOrImage(blob);
     const baseCanvas = drawResizedToCanvas(bmpOrImg, 1600, 1600);
-
-    // aperçu instantané
     showPreview(baseCanvas);
-
     setStatus('Décodage en cours…');
-    await ensureZXing(); // on aura ZXing prêt
 
+    await ensureZXing();
     const scales = [1.0, 0.8, 0.6, 0.45];
     const rotations = [0, 90, 180, 270];
 
@@ -499,14 +474,10 @@ async function onPhotoPicked(ev){
 
         canvasEl.width = w; canvasEl.height = h;
         const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+        ctx.save(); ctx.translate(w/2, h/2); ctx.rotate(rot * Math.PI/180);
+        ctx.drawImage(scaled, -scaled.width/2, -scaled.height/2); ctx.restore();
 
-        ctx.save();
-        ctx.translate(w/2, h/2);
-        ctx.rotate(rot * Math.PI/180);
-        ctx.drawImage(scaled, -scaled.width/2, -scaled.height/2);
-        ctx.restore();
-
-        // 1) Natif BarcodeDetector si dispo
+        // 1) Natif
         if ('BarcodeDetector' in window) {
           try {
             const det = new window.BarcodeDetector({
@@ -514,13 +485,11 @@ async function onPhotoPicked(ev){
             });
             const bmp = await createImageBitmap(canvasEl);
             const r = await det.detect(bmp);
-            if (r && r[0] && r[0].rawValue) {
-              onCodeDetected(r[0].rawValue); showPreview(canvasEl); setStatus('Code détecté ✅'); return;
-            }
+            if (r && r[0] && r[0].rawValue) { onCodeDetected(r[0].rawValue); showPreview(canvasEl); setStatus('Code détecté ✅'); return; }
           } catch {}
         }
 
-        // 2) ZXing (canvas)
+        // 2) ZXing
         try {
           const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvasEl);
           const bin = new ZXing.HybridBinarizer(luminance);
@@ -536,6 +505,7 @@ async function onPhotoPicked(ev){
             ZXing.BarcodeFormat.ITF,
             ZXing.BarcodeFormat.UPC_A,
             ZXing.BarcodeFormat.UPC_E,
+            ZXing.BarcodeFormat.EAN_8,
           ]);
           reader.setHints(hints);
           const res = reader.decode(bmp);
@@ -566,7 +536,6 @@ async function onPhotoPicked(ev){
   }
 }
 
-/** Affiche l’aperçu (image finale ou canvas) */
 function showPreview(canvasOrImg) {
   try {
     let url = null;
@@ -583,7 +552,7 @@ function showPreview(canvasOrImg) {
   } catch (_) {}
 }
 
-/* ---------- Envoi backend ---------- */
+/* -------------------- Envoi backend -------------------- */
 function setApiMsg(msg, isError=false){
   const el = qs("#api-msg"); if (!el) return;
   el.textContent = msg; el.style.color = isError ? "#ef4444" : "#22c55e";
@@ -651,7 +620,7 @@ function resetFormUI(){
   if (navigator.vibrate) navigator.vibrate(50);
 }
 
-/* ---------- DOM Ready ---------- */
+/* -------------------- DOM Ready -------------------- */
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   qs("#btn-theme")?.addEventListener("click", toggleTheme);
