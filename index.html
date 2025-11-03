@@ -137,6 +137,19 @@
   <div id="scannerModal" class="qc-scanner-modal" style="display:none">
     <div class="qc-scanner-box">
       <video id="scannerVideo" autoplay muted playsinline></video>
+
+<!-- Overlay guides -->
+<div id="scanOverlay" class="scan-overlay" aria-hidden="true"></div>
+
+<!-- Actions avancées -->
+<div class="scan-advanced">
+  <div id="zoomWrap" hidden>
+    <label for="zoomSlider">Zoom</label>
+    <input id="zoomSlider" type="range" min="1" max="5" step="0.1" value="1">
+  </div>
+  <button id="torchBtn" class="qc-btn ghost" type="button" hidden aria-pressed="false">Torche</button>
+</div>
+
       <div class="qc-scanner-actions">
         <button id="scannerStop" class="qc-btn ghost" type="button">Stop</button>
         <button id="scannerClose" class="qc-btn" type="button">Fermer</button>
