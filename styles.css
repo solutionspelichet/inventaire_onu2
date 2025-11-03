@@ -205,3 +205,45 @@ body{
 button:disabled, .btn-primary:disabled {
   opacity: 0.6; cursor: not-allowed;
 }
+/* Zone de visée (ROI) */
+.scan-overlay{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  display:grid;
+  place-items:center;
+}
+.scan-overlay::before{
+  content:"";
+  width:var(--roi-w, 70%);
+  height:var(--roi-h, 50%);
+  outline:2px dashed var(--qc-orange, #ff6a00);
+  outline-offset:0;
+  border-radius:12px;
+  box-shadow:
+    0 0 0 9999px rgba(0,0,0,.35); /* assombrir autour */
+}
+
+/* Contrôles avancés (zoom/torche) */
+.scan-advanced{
+  position:absolute;
+  bottom:10px;
+  left:50%;
+  transform:translateX(-50%);
+  display:flex;
+  gap:12px;
+  align-items:center;
+  background:rgba(0,0,0,.35);
+  color:#fff;
+  padding:8px 10px;
+  border-radius:10px;
+  backdrop-filter: blur(4px);
+}
+.scan-advanced label{
+  font-size:12px;
+  margin-right:6px;
+}
+.scan-advanced input[type="range"]{
+  width:160px;
+}
+
