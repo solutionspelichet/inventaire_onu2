@@ -15,17 +15,20 @@
 
 // 👉 Mets ici TON NOUVEAU déploiement Apps Script
 const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYGbQQbhPeIi_7F61pQdUEJK8kSFznjEOU68Fh6U538PGZW2/exec";
-/* Inventaire ONU — app.js (v3.2.0)
-   - Scanner live ++ : autofocus/zoom/torch + tap-to-focus + ROI adaptative + sur-échantillonnage + anti-faux positifs
-   - Scanner photo : HEIC→JPEG, orientation, redimensionnement, multi-échelles/rotations (BarcodeDetector → ZXing → jsQR)
+/* Inventaire ONU — app.js (v3.3.0)
+   - Scanner live ++ : tap-to-aim (déplacement de ROI), macro-mode, zoom/torche, sur-échantillonnage, gate de netteté (Laplacien)
+   - Scanner photo : HEIC→JPEG, orientation, multi-échelles/rotations (BarcodeDetector → ZXing → jsQR)
    - Export XLSX : colonne code_scanné forcée en texte + largeur adaptée
    - Compteur du jour, thème Pelichet, loader + toast, messages d’état
 */
 
-const APP_VERSION = "3.2.0";
+/* ========= CONFIG ========= */
+/** ⚠️ REMPLACE par ton URL COMPLETE /exec (ex.: "https://script.google.com/macros/s/AKfycbyy826nPPtVXXXXXXXXXXXX/exec") */
+const API_BASE = "https://script.google.com/macros/s/AKfycbyy826nPPtV.../exec";
+const APP_VERSION = "3.3.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
-/* -------------------- Utils DOM -------------------- */
+/* ========= Utils DOM ========= */
 const qs = (sel, el) => (el || document).querySelector(sel);
 function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
@@ -38,7 +41,7 @@ function loadScriptOnce(src) {
   });
 }
 
-/* -------------------- Thème Pelichet -------------------- */
+/* ========= Thème Pelichet ========= */
 function applyTheme(theme) {
   const root = document.documentElement;
   if (theme === "dark") root.setAttribute("data-theme", "dark"); else root.removeAttribute("data-theme");
@@ -56,7 +59,7 @@ function toggleTheme(){
   localStorage.setItem("theme", nxt); applyTheme(nxt);
 }
 
-/* -------------------- Loader + Toast + Feedback -------------------- */
+/* ========= Loader + Toast + Feedback ========= */
 let loaderEl, toastEl, submitBtn, statusEl, flashEl, previewEl, canvasEl;
 function showLoader(msg="Envoi en cours…"){
   if (loaderEl) { const t=loaderEl.querySelector(".loader-text"); if (t) t.textContent = msg; loaderEl.hidden = false; }
@@ -95,7 +98,7 @@ function onCodeDetected(text){
   setStatus(`Code détecté : ${text}`);
 }
 
-/* -------------------- Compteur jour -------------------- */
+/* ========= Compteur du jour ========= */
 async function refreshTodayCount(){
   try{
     const r = await fetch(`${API_BASE}?route=/stats&day=${todayISO}`, { mode: "cors", credentials: "omit" });
@@ -107,7 +110,7 @@ async function refreshTodayCount(){
   }
 }
 
-/* -------------------- Export XLSX (CSV → XLSX) -------------------- */
+/* ========= Export XLSX (CSV → XLSX) ========= */
 async function onDownloadXls(e){
   e.preventDefault();
   const from = qs("#export_from")?.value, to = qs("#export_to")?.value;
@@ -120,7 +123,6 @@ async function onDownloadXls(e){
     if (!r.ok) { showToast(`Erreur export (${r.status})`, "error"); return; }
     if (typeof XLSX === "undefined"){ showToast("Librairie Excel indisponible.", "error"); return; }
 
-    // XLSX lit le CSV quand type:"string"
     const wb = XLSX.read(text, { type: "string", raw: true, cellText: false, cellDates: false });
     const first = wb.SheetNames[0];
     if (first !== "Export") {
@@ -153,7 +155,7 @@ async function onDownloadXls(e){
 }
 
 /* =========================================================
-   SCANNER LIVE ++ : autofocus/zoom/torch + tap-to-focus + ROI adaptative + sur-échantillonnage
+   SCANNER LIVE ++ : tap-to-aim, macro, zoom/torche, sur-échantillonnage, gate netteté
    ========================================================= */
 let _stream = null, _nativeDetector = null;
 let _lastText = "", _streak = 0, _decoding = false;
@@ -161,19 +163,23 @@ let _loopHold = false;
 let _track = null, _caps = {}, _settings = {};
 let _zoomSupported = false, _focusDistSupported = false, _focusModeSupported = false;
 
-let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 };   // ROI par défaut (centrale)
-const _roiMacro = { x: 0.30, y: 0.35, w: 0.40, h: 0.30 }; // ROI plus petite pour petits codes
+// ROI par défaut / macro
+let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 };
+const _roiMacro = { x: 0.30, y: 0.35, w: 0.40, h: 0.30 };
+// ROI dynamique après tap-to-aim
+let _roiDyn = null;
+const ROI_TAP_SIZE = { w: 0.42, h: 0.30 };
+
 let _useMacro = false;
-let _noHitFrames = 0;                  // frames sans lecture
-const _noHitMacroThreshold = 35;       // ~2-3s → macro mode
-const _noHitZoomStepThreshold = 20;    // ~1.3s → pas de zoom
+let _noHitFrames = 0;
+const _noHitMacroThreshold = 35;      // ~2-3s
+const _noHitZoomStepThreshold = 20;   // ~1.3s
 
 function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
 async function ensureZXing(){
   if (window.ZXingBrowser || window.ZXing) return;
   await loadScriptOnce("https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js");
 }
-
 function validateEAN13(code){
   if (!/^\d{13}$/.test(code)) return false;
   const d = code.split("").map(Number);
@@ -204,7 +210,7 @@ async function ensureCamera(video){
     audio: false,
     video: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1920 },
+      width: { ideal: 1920 },  // tu peux tenter 2560x1440 sur S24
       height: { ideal: 1080 },
       frameRate: { ideal: 30, max: 30 },
       focusMode: "continuous"
@@ -223,12 +229,11 @@ async function ensureCamera(video){
   _focusModeSupported = Array.isArray(_caps.focusMode);
   _focusDistSupported = typeof _caps.focusDistance?.min === "number" && typeof _caps.focusDistance?.max === "number";
 
-  // Autofocus continu si dispo
   if (_focusModeSupported && _caps.focusMode.includes("continuous")) {
     try { await _track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
   }
 
-  // UI zoom
+  // Zoom UI
   const zoomWrap = document.getElementById("zoomWrap");
   const zoomSlider = document.getElementById("zoomSlider");
   if (_zoomSupported && zoomSlider && zoomWrap) {
@@ -242,7 +247,7 @@ async function ensureCamera(video){
     zoomWrap.hidden = true;
   }
 
-  // UI focus distance (si exposé)
+  // Focus distance: rarement modifiable sur S24 (souvent non exposé)
   const focusWrap = document.getElementById("focusWrap");
   const focusSlider = document.getElementById("focusSlider");
   if (_focusDistSupported && focusWrap && focusSlider) {
@@ -262,23 +267,37 @@ async function ensureCamera(video){
       } catch {}
       _loopHold = false;
     };
-    // Tap-to-focus → focus proche (souvent macro)
-    const videoEl = document.getElementById("scannerVideo");
-    videoEl?.addEventListener("click", async () => {
-      if (!_focusDistSupported) return;
-      _loopHold = true;
-      try {
-        await _track.applyConstraints({ advanced: [{ focusMode: "manual", focusDistance: _caps.focusDistance.min }] });
-        await wait(180);
-        if (_focusModeSupported && _caps.focusMode.includes("continuous")) {
-          await _track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-        }
-      } catch {}
-      _loopHold = false;
-    });
   } else if (focusWrap) {
     focusWrap.hidden = true;
   }
+
+  // Tap-to-aim : déplace la ROI au point tapé + petit zoom + macro
+  const videoEl = document.getElementById("scannerVideo");
+  videoEl?.addEventListener("click", async (ev) => {
+    if (!videoEl.videoWidth || !videoEl.videoHeight) return;
+    const rect = videoEl.getBoundingClientRect();
+    const nx = (ev.clientX - rect.left) / rect.width;
+    const ny = (ev.clientY - rect.top) / rect.height;
+
+    const w = ROI_TAP_SIZE.w, h = ROI_TAP_SIZE.h;
+    let rx = nx - w/2, ry = ny - h/2;
+    rx = Math.max(0, Math.min(1 - w, rx));
+    ry = Math.max(0, Math.min(1 - h, ry));
+    _roiDyn = { x: rx, y: ry, w, h };
+
+    _useMacro = true; _noHitFrames = 0;
+    try {
+      if (_zoomSupported) {
+        const caps = _caps || {};
+        const curSet = _track.getSettings?.() || {};
+        const z = curSet.zoom ?? caps.zoom?.min ?? 1;
+        const step = (caps.zoom?.step ?? 0.1) * 2;
+        const next = Math.min((caps.zoom?.max ?? 4), z + step);
+        if (next > z + 1e-6) await setZoom(next);
+      }
+    } catch {}
+    await wait(140);
+  });
 
   // Torche
   const torchBtn = document.getElementById("torchBtn");
@@ -348,13 +367,26 @@ function releaseCamera(){
   _stream = null; _track = null;
 }
 
+function paintGuides(video){
+  const overlay = document.getElementById("scanOverlay");
+  if (!overlay || !video.videoWidth) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const base = _useMacro ? _roiMacro : _roi;
+  const roi = _roiDyn || base;
+  const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
+  overlay.style.setProperty("--roi-w", rw + "px");
+  overlay.style.setProperty("--roi-h", rh + "px");
+}
+
 function drawROIFromVideo(video, canvas, roi){
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return false;
-  const rx = Math.round(roi.x * vw), ry = Math.round(roi.y * vh);
-  const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
+  const active = _roiDyn || roi;
 
-  // Sur-échantillonnage x2 de la ROI
+  const rx = Math.round(active.x * vw), ry = Math.round(active.y * vh);
+  const rw = Math.round(active.w * vw), rh = Math.round(active.h * vh);
+
+  // Sur-échantillonnage x2
   canvas.width = rw * 2; canvas.height = rh * 2;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
@@ -363,8 +395,41 @@ function drawROIFromVideo(video, canvas, roi){
   return true;
 }
 
+/* Gate de netteté (variance du Laplacien) */
+function laplacianVariance(canvas){
+  const ctx = canvas.getContext('2d', { willReadFrequently:true });
+  const { width:w, height:h } = canvas;
+  if (!w || !h) return 0;
+  const img = ctx.getImageData(0,0,w,h);
+  const d = img.data;
+
+  const gray = new Float32Array(w*h);
+  for (let i=0, j=0; i<d.length; i+=4, j++){
+    gray[j] = 0.2126*d[i] + 0.7152*d[i+1] + 0.0722*d[i+2];
+  }
+  const k = [0,-1,0, -1,4,-1, 0,-1,0];
+  const out = new Float32Array(w*h);
+  for (let y=1; y<h-1; y++){
+    for (let x=1; x<w-1; x++){
+      let sum=0;
+      sum += gray[(y-1)*w + (x)] * -1;
+      sum += gray[(y+1)*w + (x)] * -1;
+      sum += gray[(y)*w + (x-1)] * -1;
+      sum += gray[(y)*w + (x+1)] * -1;
+      sum += gray[(y)*w + (x)] * 4;
+      out[y*w + x] = sum;
+    }
+  }
+  let mean=0, count=w*h;
+  for (let i=0; i<count; i++) mean += out[i];
+  mean /= (count||1);
+  let v=0;
+  for (let i=0; i<count; i++){ const t=out[i]-mean; v += t*t; }
+  return v/(count||1);
+}
+
 async function decodeFrame(canvas){
-  // 1) BarcodeDetector si dispo
+  // 1) BarcodeDetector
   if (hasBarcodeDetector()) {
     try {
       const det = _nativeDetector || new window.BarcodeDetector({
@@ -379,8 +444,7 @@ async function decodeFrame(canvas){
       }
     } catch {}
   }
-
-  // 2) ZXing fallback
+  // 2) ZXing
   try {
     await ensureZXing();
     const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
@@ -418,23 +482,13 @@ function acceptIfStable(result){
   return null;
 }
 
-function paintGuides(video){
-  const overlay = document.getElementById("scanOverlay");
-  if (!overlay || !video.videoWidth) return;
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const roi = _useMacro ? _roiMacro : _roi;
-  const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
-  overlay.style.setProperty("--roi-w", rw + "px");
-  overlay.style.setProperty("--roi-h", rh + "px");
-}
-
 async function startScanner(){
   const video = qs("#scannerVideo"); const modal = qs("#scannerModal");
   const roiCanvas = document.createElement("canvas");
   if (!video || !modal) return;
 
   modal.style.display = "grid";
-  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0;
+  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0; _roiDyn = null;
 
   try { await ensureCamera(video); }
   catch { showToast("Caméra refusée (permissions)", "error"); modal.style.display="none"; return; }
@@ -449,6 +503,15 @@ async function startScanner(){
     const roi = _useMacro ? _roiMacro : _roi;
     try {
       if (drawROIFromVideo(video, roiCanvas, roi)) {
+        // Gate de netteté : évite le décodage si flou
+        const sharp = laplacianVariance(roiCanvas);
+        const SHARP_MIN = 45; // ajustable (50-60 pour S24 si besoin)
+        if (sharp < SHARP_MIN) {
+          _noHitFrames++;
+          setStatus("Image floue : rapprochez / éclairez / zoomez");
+          _decoding = false; schedule(); return;
+        }
+
         const result = await decodeFrame(roiCanvas);
         if (result) {
           const accepted = acceptIfStable(result);
@@ -496,7 +559,7 @@ function stopScanner(){
   _loopHold = false;
   _nativeDetector = null;
   releaseCamera();
-  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0;
+  _lastText = ""; _streak = 0; _useMacro = false; _noHitFrames = 0; _roiDyn = null;
 }
 function closeScanner(){ stopScanner(); const m = qs("#scannerModal"); if (m) m.style.display = "none"; }
 
@@ -661,7 +724,7 @@ function showPreview(canvasOrImg) {
   } catch (_) {}
 }
 
-/* -------------------- Envoi backend -------------------- */
+/* ========= Envoi backend ========= */
 function setApiMsg(msg, isError=false){
   const el = qs("#api-msg"); if (!el) return;
   el.textContent = msg; el.style.color = isError ? "#ef4444" : "#22c55e";
@@ -729,7 +792,7 @@ function resetFormUI(){
   if (navigator.vibrate) navigator.vibrate(50);
 }
 
-/* -------------------- DOM Ready -------------------- */
+/* ========= DOM Ready ========= */
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   qs("#btn-theme")?.addEventListener("click", toggleTheme);
