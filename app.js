@@ -27,7 +27,7 @@ const APP_VERSION = "3.4.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
 /* Scanner params (peuvent être ajustés si besoin) */
-const DISABLE_SHARPNESS_GATE = false;   // ← passe à true pour ignorer le filtre “image floue”
+const DISABLE_SHARPNESS_GATE = true;   // ← passe à true pour ignorer le filtre “image floue”
 const SHARP_MIN = 28;                   // ← seuil plus bas (avant: 45). Monte à 40-55 si trop de faux positifs.
 const ROI_DEFAULT = { x: 0.10, y: 0.20, w: 0.80, h: 0.60 }; // ROI plus large
 const ROI_MACRO   = { x: 0.28, y: 0.32, w: 0.44, h: 0.36 };
