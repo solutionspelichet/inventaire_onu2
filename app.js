@@ -153,68 +153,253 @@ async function onDownloadXls(e){
 }
 
 /* ---------- Scanner LIVE : BarcodeDetector → ZXing ---------- */
-let _stream = null, _nativeDetector = null, _zxingReader = null, _loop = null;
+/* ---------- Scanner LIVE FIABLE : autofocus/zoom/torch + ROI + validation ---------- */
+let _stream = null, _loop = null, _nativeDetector = null, _zxingReader = null;
+let _lastText = "", _streak = 0, _decoding = false;
+let _roi = { x: 0.15, y: 0.25, w: 0.70, h: 0.50 }; // zone centrale (en %)
+
 function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
-async function createBarcodeDetector(){
-  const fmts = ["qr_code","ean_13","code_128","code_39","upc_a","ean_8","upc_e","itf"];
-  return new window.BarcodeDetector({ formats: fmts });
-}
 async function ensureZXing(){
   if (window.ZXingBrowser || window.ZXing) return;
   await loadScriptOnce("https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js");
 }
-async function ensureCamera(video){
-  const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio:false });
-  _stream = s; video.srcObject = s; await video.play();
+
+function validateEAN13(code){
+  // 13 chiffres, checksum
+  if (!/^\d{13}$/.test(code)) return false;
+  const digits = code.split("").map(d=>+d);
+  const sum = digits.slice(0,12).reduce((acc, d, i)=> acc + d * (i%2===0 ? 1 : 3), 0);
+  const check = (10 - (sum % 10)) % 10;
+  return check === digits[12];
 }
-function releaseCamera(){ if (_stream) _stream.getTracks().forEach(t => t.stop()); _stream = null; }
-async function startScanner(){
-  const video = qs("#scannerVideo"); const modal = qs("#scannerModal");
-  if (!video || !modal) return;
-  modal.style.display = "grid";
-  try { await ensureCamera(video); } catch { showToast("Caméra refusée (permissions)", "error"); modal.style.display="none"; return; }
+function validateUPCA(code){
+  // 12 chiffres, checksum
+  if (!/^\d{12}$/.test(code)) return false;
+  const digits = code.split("").map(d=>+d);
+  const sum = digits.slice(0,11).reduce((acc, d, i)=> acc + d * (i%2===0 ? 3 : 1), 0);
+  const check = (10 - (sum % 10)) % 10;
+  return check === digits[11];
+}
+function plausible(format, text){
+  // Garde seulement ce qui a du sens
+  if (!text) return false;
+  if (format === "ean_13" || /EAN_13$/i.test(format)) return validateEAN13(text);
+  if (format === "upc_a" || /UPC_A$/i.test(format)) return validateUPCA(text);
+  if (/QR/i.test(format) || format === "qr_code") return text.length > 0; // QR: pas de checksum standard
+  // Code128/39 : on refuse < 4 car très bruité
+  if (/CODE_128|code_128|CODE_39|code_39/.test(format)) return text.length >= 4;
+  // EAN-8/UPC-E/ITF : longueur minimale
+  if (/EAN_8/i.test(format)) return /^\d{8}$/.test(text);
+  if (/UPC_E/i.test(format)) return /^\d{8}$/.test(text);
+  if (/ITF/i.test(format)) return /^\d{6,14}$/.test(text);
+  return text.length >= 4;
+}
 
-  // 1) Natif
-  try {
-    _nativeDetector = await createBarcodeDetector();
-    const c = document.createElement("canvas"), ctx = c.getContext("2d", { willReadFrequently: true });
-    const loop = async () => {
-      if (!_nativeDetector) return;
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        c.width = video.videoWidth; c.height = video.videoHeight;
-        ctx.drawImage(video,0,0,c.width,c.height);
-        const bmp = await createImageBitmap(c);
-        const r = await _nativeDetector.detect(bmp);
-        if (r && r[0] && r[0].rawValue) { onCodeDetected(r[0].rawValue); closeScanner(); return; }
-      }
-      _loop = requestAnimationFrame(loop);
+async function ensureCamera(video){
+  const constraints = {
+    audio: false,
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      focusMode: "continuous" // hint (certains navigateurs l’ignorent)
+    }
+  };
+  const s = await navigator.mediaDevices.getUserMedia(constraints);
+  _stream = s;
+  video.srcObject = s;
+  await video.play();
+
+  // Tente autofocus/zoom/torch via capabilities
+  const track = s.getVideoTracks()[0];
+  const caps = track.getCapabilities?.() || {};
+  const settings = track.getSettings?.() || {};
+
+  // Autofocus continu si supporté
+  if (caps.focusMode && caps.focusMode.includes("continuous")) {
+    try { await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
+  }
+
+  // Expose zoom UI si dispo
+  const zoomWrap = document.getElementById("zoomWrap");
+  const zoomSlider = document.getElementById("zoomSlider");
+  if (caps.zoom && zoomSlider && zoomWrap) {
+    zoomWrap.hidden = false;
+    const min = caps.zoom.min ?? 1, max = caps.zoom.max ?? 5, step = caps.zoom.step ?? 0.1;
+    zoomSlider.min = String(min); zoomSlider.max = String(max); zoomSlider.step = String(step);
+    zoomSlider.value = String(settings.zoom ?? min);
+    zoomSlider.oninput = async () => {
+      try { await track.applyConstraints({ advanced: [{ zoom: Number(zoomSlider.value) }] }); } catch {}
     };
-    _loop = requestAnimationFrame(loop);
-    return;
-  } catch { /* fallback */ }
+  } else if (zoomWrap) {
+    zoomWrap.hidden = true;
+  }
 
-  // 2) ZXing
-  try {
-    await ensureZXing();
-    const Reader = (window.ZXingBrowser && ZXingBrowser.BrowserMultiFormatReader) || (window.ZXing && ZXing.BrowserMultiFormatReader);
-    const CodeReader = (window.ZXingBrowser && ZXingBrowser.BrowserCodeReader) || (window.ZXing && ZXing.BrowserCodeReader);
-    _zxingReader = new Reader();
-    const devices = await CodeReader.listVideoInputDevices();
-    const back = devices && devices.length ? devices[0].deviceId : null;
-    await _zxingReader.decodeFromVideoDevice(back, video, (res, err, controls) => {
-      if (res && res.getText) { onCodeDetected(res.getText()); controls.stop(); closeScanner(); }
-    });
-  } catch {
-    showToast("Aucun mode de scan disponible sur cet appareil.", "error");
+  // Expose torche si dispo
+  const torchBtn = document.getElementById("torchBtn");
+  if (caps.torch && torchBtn) {
+    torchBtn.hidden = false;
+    let torchOn = false;
+    torchBtn.onclick = async () => {
+      torchOn = !torchOn;
+      try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch {}
+      torchBtn.setAttribute("aria-pressed", torchOn ? "true" : "false");
+    };
+  } else if (torchBtn) {
+    torchBtn.hidden = true;
   }
 }
+
+function releaseCamera(){
+  if (_stream) _stream.getTracks().forEach(t => t.stop());
+  _stream = null;
+}
+
+function drawROIFromVideo(video, canvas, roi){
+  // Copie la zone centrale (ROI) du flux vidéo dans le canvas
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const rx = Math.round(roi.x * vw), ry = Math.round(roi.y * vh);
+  const rw = Math.round(roi.w * vw), rh = Math.round(roi.h * vh);
+  canvas.width = rw; canvas.height = rh;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(video, rx, ry, rw, rh, 0, 0, rw, rh);
+  return true;
+}
+
+async function decodeFrame(canvas){
+  // 1) BarcodeDetector si dispo
+  if (hasBarcodeDetector()) {
+    try {
+      const det = _nativeDetector || new window.BarcodeDetector({
+        formats: ["qr_code","ean_13","code_128","code_39","upc_a","ean_8","upc_e","itf"]
+      });
+      _nativeDetector = det;
+      const bmp = await createImageBitmap(canvas);
+      const res = await det.detect(bmp);
+      if (res && res.length) {
+        const r = res[0];
+        return { text: r.rawValue || "", format: (r.format || "").toLowerCase() };
+      }
+    } catch {}
+  }
+
+  // 2) ZXing fallback
+  try {
+    await ensureZXing();
+    const luminance = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+    const bin = new ZXing.HybridBinarizer(luminance);
+    const bmp = new ZXing.BinaryBitmap(bin);
+    const reader = new ZXing.MultiFormatReader();
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.QR_CODE,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.ITF,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.EAN_8
+    ]);
+    reader.setHints(hints);
+    const res = reader.decode(bmp);
+    if (res && res.getText) {
+      return { text: res.getText(), format: String(res.getBarcodeFormat && res.getBarcodeFormat()) };
+    }
+  } catch {}
+  return null;
+}
+
+function acceptIfStable(result){
+  const text = result.text || "";
+  if (!plausible(result.format || "", text)) {
+    _lastText = ""; _streak = 0; return null;
+  }
+  if (text === _lastText) {
+    _streak++;
+  } else {
+    _lastText = text; _streak = 1;
+  }
+  // Exige 2 frames consécutives identiques pour valider
+  if (_streak >= 2) {
+    _lastText = ""; _streak = 0;
+    return text;
+  }
+  return null;
+}
+
+function paintGuides(video){
+  const overlay = document.getElementById("scanOverlay");
+  if (!overlay || !video.videoWidth) return;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const rw = Math.round(_roi.w * vw), rh = Math.round(_roi.h * vh);
+  overlay.style.setProperty("--roi-w", rw + "px");
+  overlay.style.setProperty("--roi-h", rh + "px");
+}
+
+async function startScanner(){
+  const video = qs("#scannerVideo"); const modal = qs("#scannerModal");
+  const roiCanvas = document.createElement("canvas");
+
+  if (!video || !modal) return;
+  modal.style.display = "grid";
+
+  _lastText = ""; _streak = 0;
+
+  try { await ensureCamera(video); }
+  catch { showToast("Caméra refusée (permissions)", "error"); modal.style.display="none"; return; }
+
+  paintGuides(video);
+
+  // Boucle: ~15 fps max (throttle) avec requestVideoFrameCallback si dispo
+  const step = async () => {
+    if (!_stream) return;                // stream stoppé
+    if (_decoding) { schedule(); return; } // évite la pile
+    _decoding = true;
+
+    try {
+      if (drawROIFromVideo(video, roiCanvas, _roi)) {
+        const result = await decodeFrame(roiCanvas);
+        if (result) {
+          const accepted = acceptIfStable(result);
+          if (accepted) {
+            onCodeDetected(accepted);
+            closeScanner();
+            _decoding = false;
+            return;
+          }
+        }
+      }
+    } catch {}
+    _decoding = false;
+    schedule();
+  };
+
+  function schedule(){
+    if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+      video.requestVideoFrameCallback(()=> setTimeout(step, 66)); // ~15 fps
+    } else {
+      setTimeout(step, 66);
+    }
+  }
+
+  schedule();
+}
+
 function stopScanner(){
   if (_loop) cancelAnimationFrame(_loop);
-  _loop = null; _nativeDetector = null;
-  if (_zxingReader && _zxingReader.reset) _zxingReader.reset();
+  _loop = null;
+  _nativeDetector = null;
   releaseCamera();
+  _lastText = ""; _streak = 0;
 }
 function closeScanner(){ stopScanner(); const m = qs("#scannerModal"); if (m) m.style.display = "none"; }
+
+function hasBarcodeDetector(){ return "BarcodeDetector" in window; }
+async function createBarcodeDetector(){
+  c
 
 /* ---------- Scanner PHOTO : HEIC→JPEG, orientation, multi-échelles ---------- */
 let fileBlob = null;
