@@ -22,6 +22,7 @@ const API_BASE = "https://script.google.com/macros/s/AKfycbwtFL1iaSSdkB7WjExdXYG
    - Thème Pelichet light/dark, loader + toast
 */
 
+
 const APP_VERSION = "2.7.0";
 const todayISO = new Date().toISOString().slice(0, 10);
 
